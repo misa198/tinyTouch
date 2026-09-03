@@ -283,6 +283,8 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("workflow_call:", build)
         self.assertIn("swift test", build)
         self.assertIn("xcodebuild", build)
+        self.assertNotIn("-t cert -f pkcs12", build)
+        self.assertIn("security find-identity -v -p codesigning", build)
         self.assertIn("actions/upload-artifact@", build)
         self.assertEqual(tag.count("workflow_dispatch:"), 1)
         self.assertIn('tag="app-v$VERSION"', tag)
