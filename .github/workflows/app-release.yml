@@ -53,6 +53,9 @@ jobs:
     with:
       version: ${{ needs.validate.outputs.version }}
       ref: ${{ needs.validate.outputs.commit }}
+    secrets:
+      MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+      MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
 
   publish:
     needs: [validate, build]

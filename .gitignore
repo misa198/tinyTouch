@@ -21,3 +21,4 @@ __MACOSX/
 .venv/
 .vercel
 .env*
+.secrets/
