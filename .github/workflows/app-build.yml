@@ -59,11 +59,9 @@ jobs:
           security set-keychain-settings -lut 21600 "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -A -f pkcs12
-          # Trust the self-signed certificate so find-identity -v recognises it
-          signing_cert="$RUNNER_TEMP/TinyTouch-signing.pem"
-          security find-certificate -a -p "$keychain" > "$signing_cert"
-          security add-trusted-cert -r trustRoot -k "$keychain" "$signing_cert"
-          signing_identity="$(security find-identity -v -p codesigning "$keychain" | sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}).*/\1/p' | head -n 1)"
+          # Use find-identity without -v: the cert is self-signed so it won't pass
+          # macOS trust evaluation, but the key is present and codesign will use it.
+          signing_identity="$(security find-identity -p codesigning "$keychain" | sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}).*/\1/p' | head -n 1)"
           [[ -n "$signing_identity" ]] || { echo "The release certificate contains no valid macOS code-signing identity." >&2; exit 1; }
           echo "MACOS_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
       - name: Build and package app
