@@ -12,8 +12,8 @@
 static const char *TAG = "fingerprint";
 
 static const uart_port_t FP_UART = UART_NUM_1;
-static const int FP_TX_PIN = 43;
-static const int FP_RX_PIN = 44;
+static const int FP_TX_PIN = 44;
+static const int FP_RX_PIN = 43;
 static const int FP_INT_PIN = 2;
 static const int INT_ACTIVE_VALUE = 1;
 static const uint16_t START_SLOT = 1;
@@ -26,12 +26,44 @@ static const uint8_t FP_LED_FUNC_STEADY = 3;
 
 static uint8_t current_led = 0xff;
 static SemaphoreHandle_t fp_mutex;
+static bool sensor_ready;
+static portMUX_TYPE sensor_state_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static bool sensor_ready_snapshot(void) {
+  portENTER_CRITICAL(&sensor_state_lock);
+  bool ready = sensor_ready;
+  portEXIT_CRITICAL(&sensor_state_lock);
+  return ready;
+}
+
+static void set_sensor_ready(bool ready) {
+  portENTER_CRITICAL(&sensor_state_lock);
+  sensor_ready = ready;
+  portEXIT_CRITICAL(&sensor_state_lock);
+}
+
+static void note_transport_success(void) {
+  set_sensor_ready(true);
+}
+
+static void note_transport_failure(void) { set_sensor_ready(false); }
 
 static uint16_t fp_checksum(uint8_t packet_id, const uint8_t *payload, size_t payload_len) {
   uint16_t length = payload_len + 2;
   uint32_t total = packet_id + (length >> 8) + (length & 0xff);
   for (size_t i = 0; i < payload_len; i++) total += payload[i];
   return (uint16_t)total;
+}
+
+static bool fp_response_checksum_valid(const uint8_t *packet, size_t packet_len) {
+  if (packet_len < 11) return false;
+  uint16_t response_len = ((uint16_t)packet[7] << 8) | packet[8];
+  if (response_len < 2 || packet_len != 9 + response_len) return false;
+  size_t payload_len = response_len - 2;
+  uint16_t expected = fp_checksum(packet[6], packet + 9, payload_len);
+  uint16_t received = ((uint16_t)packet[packet_len - 2] << 8) |
+                      packet[packet_len - 1];
+  return received == expected;
 }
 
 static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_len,
@@ -53,10 +85,16 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
     (uint8_t)(length >> 8), (uint8_t)(length & 0xff)
   };
 
-  uart_write_bytes(FP_UART, header, sizeof(header));
-  uart_write_bytes(FP_UART, payload, payload_len);
+  if (uart_write_bytes(FP_UART, header, sizeof(header)) != sizeof(header) ||
+      uart_write_bytes(FP_UART, payload, payload_len) != payload_len) {
+    note_transport_failure();
+    return false;
+  }
   uint8_t sum_bytes[] = {(uint8_t)(sum >> 8), (uint8_t)(sum & 0xff)};
-  uart_write_bytes(FP_UART, sum_bytes, sizeof(sum_bytes));
+  if (uart_write_bytes(FP_UART, sum_bytes, sizeof(sum_bytes)) != sizeof(sum_bytes)) {
+    note_transport_failure();
+    return false;
+  }
 
   uint8_t response[96];
   size_t pos = 0;
@@ -85,22 +123,28 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
       if (response[2] != 0xff || response[3] != 0xff ||
           response[4] != 0xff || response[5] != 0xff || resp_len < 2) {
         ESP_LOGW(TAG, "fingerprint response has invalid address/length");
+        note_transport_failure();
         return false;
       }
-      if (expected > sizeof(response)) return false;
+      if (expected > sizeof(response)) {
+        note_transport_failure();
+        return false;
+      }
       if (pos < expected) break;
 
       size_t response_payload_len = resp_len - 2;
-      uint16_t expected_sum = fp_checksum(packet_id, response + 9, response_payload_len);
-      uint16_t received_sum = ((uint16_t)response[9 + response_payload_len] << 8) |
-                              response[10 + response_payload_len];
-      if (expected_sum != received_sum) {
+      if (!fp_response_checksum_valid(response, expected)) {
         ESP_LOGW(TAG, "fingerprint response checksum mismatch");
+        note_transport_failure();
         return false;
       }
 
       if (packet_id == 0x07) {
-        if (response_payload_len < 1) return false;
+        if (response_payload_len < 1) {
+          note_transport_failure();
+          return false;
+        }
+        note_transport_success();
         *confirm = response[9];
         saw_ack = true;
         size_t actual_len = response_payload_len - 1;
@@ -137,6 +181,7 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
     if (n > 0) pos += (size_t)n;
   }
 
+  if (!saw_ack) note_transport_failure();
   return saw_ack;
 }
 
@@ -264,10 +309,6 @@ fingerprint_match_t fingerprint_authorize_poll_match(void) {
   return match;
 }
 
-bool fingerprint_authorize_poll_once(void) {
-  return fingerprint_authorize_poll_match().slot != 0;
-}
-
 void fingerprint_init(void) {
   gpio_config_t io = {
     .pin_bit_mask = 1ULL << FP_INT_PIN,
@@ -276,7 +317,7 @@ void fingerprint_init(void) {
     .pull_down_en = GPIO_PULLDOWN_ENABLE,
     .intr_type = GPIO_INTR_DISABLE,
   };
-  gpio_config(&io);
+  ESP_ERROR_CHECK(gpio_config(&io));
 
   uart_config_t cfg = {
     .baud_rate = 57600,
@@ -286,22 +327,33 @@ void fingerprint_init(void) {
     .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
     .source_clk = UART_SCLK_DEFAULT,
   };
-  uart_driver_install(FP_UART, 1024, 0, 0, NULL, 0);
-  uart_param_config(FP_UART, &cfg);
-  uart_set_pin(FP_UART, FP_TX_PIN, FP_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+  ESP_ERROR_CHECK(uart_driver_install(FP_UART, 1024, 0, 0, NULL, 0));
+  ESP_ERROR_CHECK(uart_param_config(FP_UART, &cfg));
+  ESP_ERROR_CHECK(uart_set_pin(FP_UART, FP_TX_PIN, FP_RX_PIN,
+                               UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   fp_mutex = xSemaphoreCreateMutex();
+  configASSERT(fp_mutex != NULL);
 
   uint8_t params[] = {0x00, 0x00, 0x00, 0x00};
-  uint8_t confirm = 0xff;
-  fp_take(2000);
-  bool ok = fp_command(0x13, params, sizeof(params), &confirm, NULL, NULL, 2000) && confirm == 0x00;
-  fp_give();
+  bool ok = false;
+  for (int attempt = 1; attempt <= 3 && !ok; attempt++) {
+    uint8_t confirm = 0xff;
+    configASSERT(fp_take(2000));
+    ok = fp_command(0x13, params, sizeof(params), &confirm, NULL, NULL, 2000) &&
+         confirm == 0x00;
+    set_sensor_ready(ok);
+    fp_give();
+    if (!ok && attempt < 3) vTaskDelay(pdMS_TO_TICKS(250));
+  }
   ESP_LOGI(TAG, "sensor verify: %s", ok ? "ok" : "failed");
-  fingerprint_led_idle();
+  if (ok) fingerprint_led_idle();
 }
 
-bool fingerprint_authorize_once(void) {
-  if (!fp_take(FINGER_WAIT_MS + 1000)) return false;
+bool fingerprint_is_ready(void) {
+  return sensor_ready_snapshot();
+}
+
+static bool fingerprint_authorize_locked(void) {
   uint8_t confirm = 0xff;
   ESP_LOGI(TAG, "finger present hint=%d", finger_present());
   set_aura(FP_LED_BLUE);
@@ -319,11 +371,18 @@ bool fingerprint_authorize_once(void) {
   if (!got_image) {
     ESP_LOGW(TAG, "gen image failed confirm=0x%02x", confirm);
     show_result(false);
-    fp_give();
     return false;
   }
 
-  bool ok = fingerprint_match_captured(false).slot != 0;
+  return fingerprint_match_captured(false).slot != 0;
+}
+
+bool fingerprint_authorize_prompted(void (*prompt)(void)) {
+  // Own the sensor before prompting. Otherwise the higher-priority background
+  // authentication task can capture the prompted touch first.
+  if (!fp_take(FINGER_WAIT_MS + 1000)) return false;
+  if (prompt) prompt();
+  bool ok = fingerprint_authorize_locked();
   fp_give();
   return ok;
 }

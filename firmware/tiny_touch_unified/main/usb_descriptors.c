@@ -11,7 +11,6 @@
 #define ITF_NUM_CCID 0
 #define ITF_NUM_HID 1
 #define ITF_NUM_CDC 2
-#define ITF_NUM_CDC_DATA 3
 #define ITF_NUM_TOTAL 4
 
 #define EPNUM_CCID_OUT 0x01
@@ -20,7 +19,9 @@
 #define EPNUM_CDC_NOTIF 0x83
 #define EPNUM_CDC_OUT 0x04
 #define EPNUM_CDC_IN 0x84
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 9 + 54 + 7 + 7 + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CCID_DESC_LEN (9 + 54 + 7 + 7)
+#define CONFIG_TOTAL_LEN \
+  (TUD_CONFIG_DESC_LEN + CCID_DESC_LEN + TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
 
 uint8_t const tiny_touch_hid_report_descriptor[] = {
   TUD_HID_REPORT_DESC_KEYBOARD()
@@ -43,7 +44,9 @@ const tusb_desc_device_t tiny_touch_device_descriptor = {
   .bNumConfigurations = 0x01,
 };
 
-const uint8_t tiny_touch_fs_configuration_descriptor[] = {
+// The USB topology is deliberately stable for the full power session. Mode is
+// a live policy decision, not a descriptor-selection or reboot decision.
+const uint8_t tiny_touch_configuration_descriptor[] = {
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN,
                         TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 

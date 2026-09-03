@@ -4,22 +4,13 @@ set -euo pipefail
 project_dir="${0:A:h:h}"
 cd "$project_dir"
 
-if (( $# > 0 )); then
-  print "Usage: packaging/release"
-  print "Push main. GitHub Actions builds, publishes, deploys, and verifies the release."
-  [[ "$1" = --help || "$1" = -h ]] && exit 0
+if [[ "${1:-}" = --help || "${1:-}" = -h ]]; then
+  print "Usage: packaging/release [version]"
+  print "Dispatch the GitHub Actions release flow."
+  exit 0
+fi
+if (( $# > 1 )); then
+  print -u2 "Usage: packaging/release [version]"
   exit 2
 fi
-
-git diff --quiet -- && git diff --cached --quiet -- || {
-  print -u2 "Tracked and staged files must be clean before releasing."
-  exit 1
-}
-[[ "$(git branch --show-current)" = main ]] || {
-  print -u2 "Releases must be created from main."
-  exit 1
-}
-
-git push origin main
-print "GitHub Actions is handling the release from this main-branch push."
-print "No local build tools or signing keys are used."
+exec packaging/tag-release "$@"

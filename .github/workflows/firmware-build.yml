@@ -1,0 +1,98 @@
+name: Firmware Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      production:
+        description: Use the repository firmware signing key
+        required: false
+        default: false
+        type: boolean
+      ref:
+        description: Exact commit to build
+        required: false
+        default: ""
+        type: string
+    secrets:
+      TINYTOUCH_FIRMWARE_SIGNING_KEY_B64:
+        required: false
+    outputs:
+      artifact-name:
+        description: Uploaded firmware artifact name
+        value: ${{ jobs.firmware.outputs.artifact-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.3@sha256:0143924cb07c717befe27547896f53b74ffe7c3e856fe0d19c0391ec22dc2222
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact-name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Prepare firmware signing key
+        env:
+          PRODUCTION: ${{ inputs.production || false }}
+          TINYTOUCH_FIRMWARE_SIGNING_KEY_B64: ${{ secrets.TINYTOUCH_FIRMWARE_SIGNING_KEY_B64 }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          source /opt/esp/idf/export.sh
+          key=firmware/tiny_touch_unified/secure_boot_signing_key.pem
+          if [[ "$PRODUCTION" = true ]]; then
+            test -n "$TINYTOUCH_FIRMWARE_SIGNING_KEY_B64" || {
+              echo "TINYTOUCH_FIRMWARE_SIGNING_KEY_B64 is required for production builds." >&2
+              exit 1
+            }
+            if ! printf '%s' "$TINYTOUCH_FIRMWARE_SIGNING_KEY_B64" \
+              | tr -d '[:space:]' | base64 --decode > "$key"; then
+              echo "TINYTOUCH_FIRMWARE_SIGNING_KEY_B64 must contain only the Base64-encoded PEM key." >&2
+              exit 1
+            fi
+            grep -q '^-----BEGIN .*PRIVATE KEY-----$' "$key" || {
+              echo "Decoded firmware signing secret is not a PEM private key." >&2
+              exit 1
+            }
+          else
+            espsecure.py generate_signing_key --version 2 "$key" >/dev/null
+          fi
+          test -s "$key"
+      - name: Build and verify firmware
+        run: |
+          source /opt/esp/idf/export.sh
+          commit="$(git rev-parse HEAD)"
+          idf.py -C firmware/tiny_touch_unified build
+          espsecure.py verify_signature --version 2 \
+            --keyfile firmware/tiny_touch_unified/secure_boot_signing_key.pem \
+            firmware/tiny_touch_unified/build/tiny_touch_unified.bin
+          esptool.py --chip esp32s3 image_info \
+            firmware/tiny_touch_unified/build/bootloader/bootloader.bin
+          python packaging/assemble-release.py \
+            --firmware-build firmware/tiny_touch_unified/build \
+            --build-id "${commit:0:12}"
+          python packaging/release_integrity.py firmware dist/release --commit "$commit"
+      - name: Package firmware
+        id: package
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          bundle="tinytouch-firmware-${version}.tar.gz"
+          tar -C dist/release -czf "dist/$bundle" .
+          (cd dist && sha256sum "$bundle" > "$bundle.sha256")
+          echo "artifact-name=tinytouch-firmware-${version}" >> "$GITHUB_OUTPUT"
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.package.outputs.artifact-name }}
+          path: |
+            dist/${{ steps.package.outputs.bundle }}
+            dist/${{ steps.package.outputs.bundle }}.sha256
+          if-no-files-found: error

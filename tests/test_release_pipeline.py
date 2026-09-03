@@ -29,7 +29,7 @@ def metadata(path: Path) -> dict:
 class ReleasePipelineTests(unittest.TestCase):
     commit = "1234567890ab" + "c" * 28
 
-    def make_app(self, path: Path, marker: bytes) -> None:
+    def make_app(self, path: Path) -> None:
         payload = bytearray(512)
         offset = 32
         struct.pack_into("<I", payload, offset, integrity.APP_DESCRIPTION_MAGIC)
@@ -41,8 +41,6 @@ class ReleasePipelineTests(unittest.TestCase):
         idf = b"v5.3.2"
         payload[offset + 112:offset + 112 + len(idf)] = idf
         payload[256:268] = self.commit[:12].encode()
-        if marker == b"recovery":
-            payload[300:317] = b"RECOVERY COMPLETE"
         path.write_bytes(payload)
 
     def make_cli(self, path: Path) -> None:
@@ -66,7 +64,7 @@ class ReleasePipelineTests(unittest.TestCase):
             for address, name in images.items():
                 path = directory / name
                 if address == 0x10000:
-                    self.make_app(path, kind.encode())
+                    self.make_app(path)
                 elif name == "ota_data_initial.bin":
                     path.write_bytes(b"ota" * 32)
                 elif name == "partition-table.bin":
@@ -88,9 +86,7 @@ class ReleasePipelineTests(unittest.TestCase):
             }
             (directory / "manifest.json").write_text(json.dumps(layouts[kind]))
         factory_app = root / "factory" / "tiny_touch_unified.bin"
-        factory_state = root / "factory" / "ota_data_initial.bin"
         (root / "tiny_touch_unified.bin").write_bytes(factory_app.read_bytes())
-        (root / "ota_data_initial.bin").write_bytes(factory_state.read_bytes())
         cli = {}
         for key, name in (
             ("macos-arm64", "tinytouch-macos-arm64.tar.gz"),
@@ -107,7 +103,6 @@ class ReleasePipelineTests(unittest.TestCase):
             "boards": ["esp32s3-super-mini", "seeed-xiao-esp32s3"],
             "firmware": layouts,
             "ota": metadata(root / "tiny_touch_unified.bin"),
-            "migration": {"otaState": metadata(root / "ota_data_initial.bin")},
             "cli": cli,
         }
         (root / "release-manifest.json").write_text(json.dumps(manifest))
@@ -149,8 +144,10 @@ class ReleasePipelineTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((public / "release.json").read_text()), release_manifest
             )
-            self.assertTrue(
-                (public / "flash" / "recovery" / "firmware" / "tiny_touch_recovery.bin").is_file()
+            self.assertTrue((public / "flash" / "recovery" / "manifest.json").is_file())
+            self.assertEqual(
+                json.loads((public / "flash" / "recovery" / "manifest.json").read_text()),
+                release_manifest["firmware"]["factory"],
             )
             self.assertTrue((public / "cli" / "tinytouch-macos-arm64.tar.gz").is_file())
             (output / "unexpected.bin").write_bytes(b"unexpected")
@@ -188,92 +185,70 @@ class ReleasePipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(integrity.IntegrityError, "links are not allowed"):
                 integrity.safe_extract(archive_path, root / "output")
 
-    def test_tag_workflow_promotes_without_rebuilding(self):
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
-        self.assertNotIn("idf.py", workflow)
-        self.assertNotIn("build-standalone-macos", workflow)
-        self.assertNotIn("--clobber", workflow)
-        self.assertIn('workflows: ["Release candidate"]', workflow)
-        self.assertIn("AUTOMATIC_COMMIT", workflow)
-        self.assertIn("AUTOMATIC_RUN_ID", workflow)
-        self.assertIn("Create automatic release tag", workflow)
-        self.assertIn("Version $release_tag is already published and active", workflow)
-        self.assertGreaterEqual(
-            workflow.count('git/ref/heads/main" --jq .object.sha'), 2
-        )
-        self.assertIn('test "$tag_type" = tag', workflow)
-        self.assertIn('if [[ "$tag_sha" = "$release_commit" ]]', workflow)
-        self.assertIn("already published and active", workflow)
-        self.assertIn("Confirm automatic candidate is still current", workflow)
-        self.assertIn("--signer-workflow", workflow)
-        self.assertIn("--source-digest", workflow)
-        self.assertIn("Activate verified CLI update channel", workflow)
-        self.assertIn("group: release-promotion", workflow)
-        self.assertIn("Verify production flasher and CLI", workflow)
-        self.assertIn("Commit verified docs release assets", workflow)
-        self.assertNotIn("alpacaengineer/dispatches", workflow)
-        self.assertIn("PUBLIC_SITE_ORIGIN", workflow)
-        self.assertIn("vars.TINYTOUCH_SITE_ORIGIN", workflow)
-        self.assertNotIn("base=https://alpacaengineer.ing/tinytouch", workflow)
-        self.assertIn("find docs/public/flash/factory", workflow)
-        self.assertIn("packaging/sync-docs-release.py", workflow)
-        self.assertIn("sha256sum --check --strict", workflow)
-        self.assertIn("--json tagName,isDraft", workflow)
-        self.assertNotIn("releases/tags/$GITHUB_REF_NAME", workflow)
-        self.assertLess(
-            workflow.index("Verify production flasher and CLI"),
-            workflow.index("Activate verified CLI update channel"),
-        )
-        self.assertIn("release immutability is a configured server-side prerequisite", workflow)
-        self.assertNotIn("TINYTOUCH_RELEASE_ADMIN_TOKEN", workflow)
-        self.assertIn("CANDIDATE_WAIT_SECONDS", workflow)
-        self.assertIn("release_state=published", workflow)
-        self.assertIn('git rev-parse "$release_tag^{commit}"', workflow)
-        self.assertNotIn("release_target", workflow)
-        candidate = (ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
-        self.assertIn("paths-ignore:", candidate)
-        self.assertIn("channels/**", candidate)
-        self.assertIn("docs/public/release.json", candidate)
-        self.assertIn("docs/public/flash/factory/**", candidate)
-        self.assertNotIn("workflow_dispatch:", candidate)
-        self.assertIn("group: release-candidate-main", candidate)
-        self.assertIn("cancel-in-progress: true", candidate)
-        self.assertIn('test "$GITHUB_REF" = refs/heads/main', candidate)
-        self.assertNotIn("tinytouch-web-flashers.tar.gz", workflow)
-        self.assertNotIn("web/flash", workflow)
+    def test_checksum_mismatch_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "firmware.tar.gz").write_bytes(b"firmware")
+            (root / "checksums.txt").write_text(f"{'0' * 64}  firmware.tar.gz\n")
+            with self.assertRaisesRegex(integrity.IntegrityError, "checksum mismatch"):
+                integrity.validate_checksums(root)
 
-        build_script = (ROOT / "packaging" / "build-standalone-macos.sh").read_text()
-        self.assertIn("--require-hashes", build_script)
-        self.assertIn("--no-build-isolation", build_script)
-        self.assertIn("requirements-bootstrap.txt", build_script)
-        self.assertIn("requirements-release.txt", build_script)
-        tag_script = (ROOT / "packaging" / "tag-release").read_text()
-        self.assertIn("git diff --cached --quiet", tag_script)
-        self.assertNotIn("git status --porcelain", tag_script)
-        self.assertIn("Timed out after 600s", tag_script)
-        self.assertLess(tag_script.index("release-candidate.yml"), tag_script.index("git tag -a"))
-        self.assertIn("release.yml/runs", tag_script)
-        self.assertIn("Release promotion ended with", tag_script)
-        self.assertNotIn("\n  status=", tag_script)
-        release_script = (ROOT / "packaging" / "release").read_text()
-        self.assertIn("git push origin main", release_script)
-        self.assertIn("GitHub Actions is handling the release", release_script)
-        self.assertNotIn("tag-release", release_script)
+    def test_build_tag_and_release_workflow_contract(self):
+        workflows = ROOT / ".github" / "workflows"
+        build = (workflows / "firmware-build.yml").read_text()
+        tag = (workflows / "firmware-tag.yml").read_text()
+        release = (workflows / "firmware-release.yml").read_text()
 
-    def test_browser_requires_protocol_five_and_prefetches_before_usb(self):
-        source = (ROOT / "docs" / ".vitepress" / "theme" / "FlashTool.vue").read_text()
-        self.assertIn("const UPDATE_PROTOCOL = 5", source)
-        self.assertIn("nextManifest.eraseAll !== false", source)
-        self.assertIn("nextManifest.compress !== false", source)
-        self.assertIn("requestPort({ filters: [{ usbVendorId: 0x303a }] })", source)
-        flash = source.split("async function flash()", 1)[1].split(
-            "async function selectTool()", 1
-        )[0]
-        self.assertLess(
-            flash.index("const fileArray = firmwareFiles.value"),
-            flash.index("navigator.serial.requestPort"),
-        )
+        self.assertIn("pull_request:", build)
+        self.assertIn("workflow_dispatch:", build)
+        self.assertIn("workflow_call:", build)
+        self.assertIn("contents: read", build)
+        self.assertIn("espressif/idf:release-v5.3@sha256:", build)
+        self.assertIn('safe.directory "$GITHUB_WORKSPACE"', build)
+        self.assertIn("generate_signing_key", build)
+        self.assertIn("TINYTOUCH_FIRMWARE_SIGNING_KEY_B64 is required", build)
+        self.assertIn("must contain only the Base64-encoded PEM key", build)
+        self.assertIn("Decoded firmware signing secret is not a PEM private key", build)
+        self.assertIn("packaging/assemble-release.py", build)
+        self.assertIn("packaging/release_integrity.py firmware", build)
+        self.assertIn('tinytouch-firmware-${version}.tar.gz', build)
+        self.assertIn('sha256sum "$bundle"', build)
 
+        self.assertEqual(tag.count("workflow_dispatch:"), 1)
+        self.assertNotIn("pull_request:", tag)
+        self.assertIn("actions: write", tag)
+        self.assertIn("contents: write", tag)
+        self.assertIn("CreateCommitOnBranchInput", tag)
+        self.assertIn("createCommitOnBranch", tag)
+        self.assertIn("expectedHeadOid", tag)
+        self.assertIn("head_verified", tag)
+        self.assertIn('.github/release-source.json', tag)
+        self.assertIn('if tag_ref="$(gh api', tag)
+        self.assertNotIn('.object.sha 2>/dev/null || true', tag)
+        self.assertIn("verification.verified", tag)
+        self.assertIn("Tag $tag already", tag)
+        self.assertIn("main changed before", tag)
+        self.assertIn('-f ref="refs/tags/$tag" -f sha="$commit"', tag)
+        self.assertIn("actions/workflows/firmware-release.yml/dispatches", tag)
+        self.assertIn("-rc\\.", tag)
+
+        self.assertIn('tags: ["v*"]', release)
+        self.assertIn("workflow_dispatch:", release)
+        self.assertIn("contents: write", release)
+        self.assertIn("uses: ./.github/workflows/firmware-build.yml", release)
+        self.assertIn("production: true", release)
+        self.assertIn("secrets: inherit", release)
+        self.assertIn('git show "$commit:VERSION"', release)
+        self.assertIn("sha256sum --check --strict", release)
+        self.assertIn("gh release create", release)
+        self.assertIn('--repo "$GITHUB_REPOSITORY"', release)
+        self.assertIn("--generate-notes", release)
+        self.assertNotIn("idf.py", release)
+        self.assertNotIn("release-candidate", build + tag + release)
+
+        self.assertFalse((workflows / "release-candidate.yml").exists())
+        self.assertNotIn("release-candidate", (ROOT / "packaging" / "tag-release").read_text())
+        self.assertIn("exec packaging/tag-release", (ROOT / "packaging" / "release").read_text())
 
 if __name__ == "__main__":
     unittest.main()

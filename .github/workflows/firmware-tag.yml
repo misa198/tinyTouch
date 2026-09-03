@@ -1,0 +1,97 @@
+name: Firmware Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the v prefix (for example 0.9.0 or 0.9.0-rc.1)
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: tag-firmware-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create verified version commit and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" = refs/heads/main ]] || {
+            echo "Run this workflow from main." >&2
+            exit 1
+          }
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || {
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          }
+
+          repository="$GITHUB_REPOSITORY"
+          tag="v$VERSION"
+          head="$(gh api "repos/$repository/git/ref/heads/main" --jq .object.sha)"
+          current_version="$(gh api "repos/$repository/contents/VERSION?ref=$head" --jq .content | base64 --decode | tr -d '[:space:]')"
+          tag_sha=""
+          if tag_ref="$(gh api "repos/$repository/git/ref/tags/$tag" 2>/dev/null)"; then
+            tag_sha="$(jq -r .object.sha <<<"$tag_ref")"
+          fi
+          head_verified="$(gh api "repos/$repository/commits/$head" --jq .commit.verification.verified)"
+
+          commit="$head"
+          update_version=false
+          [[ "$current_version" != "$VERSION" ]] && update_version=true
+          create_commit="$update_version"
+          [[ -z "$tag_sha" && "$head_verified" != true ]] && create_commit=true
+          if [[ "$create_commit" = true ]]; then
+            [[ -z "$tag_sha" ]] || {
+              echo "Tag $tag already exists but main has VERSION $current_version." >&2
+              exit 1
+            }
+            query='mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }'
+            content="$(printf '%s\n' "$VERSION" | base64 -w0)"
+            release_source="$(printf '{\"version\":\"%s\",\"source\":\"%s\"}\n' "$VERSION" "$head" | base64 -w0)"
+            jq -n --arg query "$query" --arg repository "$repository" \
+              --arg headline "Release tinyTouch $VERSION" --arg content "$content" \
+              --arg release_source "$release_source" --arg head "$head" \
+              --argjson update_version "$update_version" \
+              '{query: $query, variables: {input: {branch: {repositoryNameWithOwner: $repository, branchName: "main"}, message: {headline: $headline}, expectedHeadOid: $head, fileChanges: {additions: ([{path: ".github/release-source.json", contents: $release_source}] + if $update_version then [{path: "VERSION", contents: $content}] else [] end)}}}}' \
+              > request.json
+            commit="$(gh api graphql --input request.json --jq .data.createCommitOnBranch.commit.oid)"
+            [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          fi
+
+          verified=false
+          for _ in {1..10}; do
+            verified="$(gh api "repos/$repository/commits/$commit" --jq .commit.verification.verified)"
+            [[ "$verified" = true ]] && break
+            sleep 2
+          done
+          [[ "$verified" = true ]] || {
+            echo "Release commit $commit is not verified." >&2
+            exit 1
+          }
+          [[ "$(gh api "repos/$repository/git/ref/heads/main" --jq .object.sha)" = "$commit" ]] || {
+            echo "main changed before the release tag was created." >&2
+            exit 1
+          }
+
+          if [[ -n "$tag_sha" ]]; then
+            [[ "$tag_sha" = "$commit" ]] || {
+              echo "Tag $tag already points to another commit." >&2
+              exit 1
+            }
+          else
+            gh api "repos/$repository/git/refs" --method POST \
+              -f ref="refs/tags/$tag" -f sha="$commit" >/dev/null
+          fi
+
+          gh api "repos/$repository/actions/workflows/firmware-release.yml/dispatches" --method POST \
+            -f ref=main -f "inputs[tag]=$tag"

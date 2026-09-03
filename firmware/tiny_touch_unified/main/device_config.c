@@ -1,34 +1,41 @@
 #include "device_config.h"
 
+#include <assert.h>
 #include <string.h>
 
-#include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "mbedtls/sha256.h"
+#include "nvs.h"
 
-static device_mode_t current_mode = DEVICE_MODE_PIV;
-static device_hid_host_t hid_hosts[DEVICE_CONFIG_MAX_HID_HOSTS];
-static size_t hid_host_count;
-static uint8_t fingerprint_profile_views;
-static uint16_t typing_delay_ms = 7;
-static bool submit_enter = true;
-static uint16_t touch_cooldown_ms = 800;
+#define CONFIG_NAMESPACE "tt6"
+#define CONFIG_KEY "config"
+#define CONFIG_VERSION 6
 
-static bool save_u16(const char *key, uint16_t value) {
-  nvs_handle_t handle;
-  if (nvs_open("device", NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = nvs_set_u16(handle, key, value);
-  if (result == ESP_OK) result = nvs_commit(handle);
-  nvs_close(handle);
-  return result == ESP_OK;
-}
+typedef struct {
+  uint8_t version;
+  uint8_t mode;
+  uint8_t fingerprint_profile_views;
+  uint8_t submit_enter;
+  uint16_t typing_delay_ms;
+  uint16_t touch_cooldown_ms;
+  uint8_t hid_host_count;
+  device_hid_host_t hid_hosts[DEVICE_CONFIG_MAX_HID_HOSTS];
+} stored_config_t;
 
-static bool save_u8(const char *key, uint8_t value) {
-  nvs_handle_t handle;
-  if (nvs_open("device", NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = nvs_set_u8(handle, key, value);
-  if (result == ESP_OK) result = nvs_commit(handle);
-  nvs_close(handle);
-  return result == ESP_OK;
+static stored_config_t config;
+static SemaphoreHandle_t config_mutex;
+
+static void lock(void) { assert(xSemaphoreTake(config_mutex, portMAX_DELAY) == pdTRUE); }
+static void unlock(void) { assert(xSemaphoreGive(config_mutex) == pdTRUE); }
+
+static void defaults(stored_config_t *value) {
+  memset(value, 0, sizeof(*value));
+  value->version = CONFIG_VERSION;
+  value->mode = DEVICE_MODE_PIV;
+  value->submit_enter = 1;
+  value->typing_delay_ms = 7;
+  value->touch_cooldown_ms = 800;
 }
 
 static void derive_key_id(const uint8_t key[32], uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE]) {
@@ -38,238 +45,121 @@ static void derive_key_id(const uint8_t key[32], uint8_t id[DEVICE_CONFIG_HID_KE
   memset(digest, 0, sizeof(digest));
 }
 
-static bool save_hid_hosts(void) {
+static bool valid(const stored_config_t *value) {
+  if (value->version != CONFIG_VERSION || value->mode > DEVICE_MODE_HID ||
+      value->fingerprint_profile_views > 5 || value->submit_enter > 1 ||
+      value->typing_delay_ms < 1 || value->typing_delay_ms > 100 ||
+      value->touch_cooldown_ms < 100 || value->touch_cooldown_ms > 5000 ||
+      value->hid_host_count > DEVICE_CONFIG_MAX_HID_HOSTS) return false;
+  if (value->mode == DEVICE_MODE_HID && value->hid_host_count == 0) return false;
+  for (size_t i = 0; i < value->hid_host_count; i++) {
+    uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE];
+    derive_key_id(value->hid_hosts[i].key, id);
+    bool matches = memcmp(id, value->hid_hosts[i].id, sizeof(id)) == 0;
+    memset(id, 0, sizeof(id));
+    if (!matches) return false;
+  }
+  return true;
+}
+
+static bool save_locked(const stored_config_t *candidate) {
   nvs_handle_t handle;
-  if (nvs_open("device", NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = hid_host_count
-                         ? nvs_set_blob(handle, "hid_hosts", hid_hosts,
-                                        hid_host_count * sizeof(hid_hosts[0]))
-                         : nvs_erase_key(handle, "hid_hosts");
-  if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
-  if (result == ESP_OK) result = nvs_erase_key(handle, "hid_key");
-  if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
-  if (result == ESP_OK) result = nvs_set_u8(handle, "mode", (uint8_t)current_mode);
+  if (nvs_open(CONFIG_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return false;
+  esp_err_t result = nvs_set_blob(handle, CONFIG_KEY, candidate, sizeof(*candidate));
   if (result == ESP_OK) result = nvs_commit(handle);
   nvs_close(handle);
   return result == ESP_OK;
 }
 
-void device_config_reload(void) {
-  current_mode = DEVICE_MODE_PIV;
-  memset(hid_hosts, 0, sizeof(hid_hosts));
-  hid_host_count = 0;
-  fingerprint_profile_views = 0;
-  typing_delay_ms = 7;
-  submit_enter = true;
-  touch_cooldown_ms = 800;
-
-  nvs_handle_t handle;
-  if (nvs_open("device", NVS_READONLY, &handle) != ESP_OK) return;
-
-  uint8_t stored_mode = DEVICE_MODE_PIV;
-  if (nvs_get_u8(handle, "mode", &stored_mode) == ESP_OK &&
-      stored_mode <= DEVICE_MODE_HID) {
-    current_mode = (device_mode_t)stored_mode;
-  }
-
-  uint8_t stored_views = 0;
-  if (nvs_get_u8(handle, "finger_views", &stored_views) == ESP_OK && stored_views <= 5) {
-    fingerprint_profile_views = stored_views;
-  }
-
-  uint16_t stored_u16 = 0;
-  if (nvs_get_u16(handle, "type_delay", &stored_u16) == ESP_OK &&
-      stored_u16 >= 1 && stored_u16 <= 100) {
-    typing_delay_ms = stored_u16;
-  }
-  uint8_t stored_u8 = 0;
-  if (nvs_get_u8(handle, "submit_enter", &stored_u8) == ESP_OK && stored_u8 <= 1) {
-    submit_enter = stored_u8 != 0;
-  }
-  if (nvs_get_u16(handle, "touch_cool", &stored_u16) == ESP_OK &&
-      stored_u16 >= 100 && stored_u16 <= 5000) {
-    touch_cooldown_ms = stored_u16;
-  }
-
-  size_t hosts_length = sizeof(hid_hosts);
-  if (nvs_get_blob(handle, "hid_hosts", hid_hosts, &hosts_length) == ESP_OK &&
-      hosts_length > 0 && hosts_length % sizeof(hid_hosts[0]) == 0) {
-    hid_host_count = hosts_length / sizeof(hid_hosts[0]);
-    if (hid_host_count > DEVICE_CONFIG_MAX_HID_HOSTS) hid_host_count = 0;
-  } else {
-    uint8_t legacy_key[32];
-    size_t key_length = sizeof(legacy_key);
-    if (nvs_get_blob(handle, "hid_key", legacy_key, &key_length) == ESP_OK &&
-        key_length == sizeof(legacy_key)) {
-      derive_key_id(legacy_key, hid_hosts[0].id);
-      memcpy(hid_hosts[0].key, legacy_key, sizeof(legacy_key));
-      hid_host_count = 1;
-    }
-    memset(legacy_key, 0, sizeof(legacy_key));
-  }
-  nvs_close(handle);
+static bool replace_locked(const stored_config_t *candidate) {
+  if (!valid(candidate) || !save_locked(candidate)) return false;
+  config = *candidate;
+  return true;
 }
 
 void device_config_init(void) {
-  device_config_reload();
+  config_mutex = xSemaphoreCreateMutex();
+  assert(config_mutex != NULL);
+  stored_config_t loaded = {0};
+  size_t length = sizeof(loaded);
+  nvs_handle_t handle;
+  bool opened = nvs_open(CONFIG_NAMESPACE, NVS_READONLY, &handle) == ESP_OK;
+  bool loaded_ok = opened && nvs_get_blob(handle, CONFIG_KEY, &loaded, &length) == ESP_OK &&
+                   length == sizeof(loaded) && valid(&loaded);
+  if (opened) nvs_close(handle);
+  lock();
+  if (loaded_ok) config = loaded;
+  else { defaults(&config); assert(save_locked(&config)); }
+  unlock();
 }
 
 device_mode_t device_config_mode(void) {
-  return current_mode;
+  lock(); device_mode_t value = (device_mode_t)config.mode; unlock(); return value;
 }
 
 const char *device_config_mode_name(void) {
-  return current_mode == DEVICE_MODE_HID ? "hid" : "piv";
+  return device_config_mode() == DEVICE_MODE_HID ? "hid" : "piv";
 }
 
 bool device_config_set_mode(device_mode_t mode) {
-  if (mode != DEVICE_MODE_PIV && mode != DEVICE_MODE_HID) return false;
-  if (mode == DEVICE_MODE_HID && hid_host_count == 0) return false;
-
-  nvs_handle_t handle;
-  if (nvs_open("device", NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = nvs_set_u8(handle, "mode", (uint8_t)mode);
-  if (result == ESP_OK) result = nvs_commit(handle);
-  nvs_close(handle);
-  if (result == ESP_OK) current_mode = mode;
-  return result == ESP_OK;
-}
-
-bool device_config_hid_key_configured(void) {
-  return hid_host_count > 0;
-}
-
-bool device_config_get_hid_key(uint8_t key[32]) {
-  if (hid_host_count == 0) return false;
-  memcpy(key, hid_hosts[0].key, sizeof(hid_hosts[0].key));
-  return true;
-}
-
-bool device_config_set_hid_key(const uint8_t key[32]) {
-  device_hid_host_t previous[DEVICE_CONFIG_MAX_HID_HOSTS];
-  size_t previous_count = hid_host_count;
-  memcpy(previous, hid_hosts, sizeof(previous));
-  memset(hid_hosts, 0, sizeof(hid_hosts));
-  derive_key_id(key, hid_hosts[0].id);
-  memcpy(hid_hosts[0].key, key, sizeof(hid_hosts[0].key));
-  hid_host_count = 1;
-  if (save_hid_hosts()) {
-    memset(previous, 0, sizeof(previous));
-    return true;
-  }
-  memcpy(hid_hosts, previous, sizeof(hid_hosts));
-  hid_host_count = previous_count;
-  memset(previous, 0, sizeof(previous));
-  return false;
+  lock(); stored_config_t candidate = config; candidate.mode = mode;
+  bool ok = replace_locked(&candidate); unlock(); return ok;
 }
 
 size_t device_config_hid_host_count(void) {
-  return hid_host_count;
+  lock(); size_t value = config.hid_host_count; unlock(); return value;
 }
 
-bool device_config_get_hid_host(size_t index, device_hid_host_t *host) {
-  if (!host || index >= hid_host_count) return false;
-  memcpy(host, &hid_hosts[index], sizeof(*host));
-  return true;
+size_t device_config_copy_hid_hosts(device_hid_host_t hosts[DEVICE_CONFIG_MAX_HID_HOSTS]) {
+  if (!hosts) return 0;
+  lock(); size_t count = config.hid_host_count;
+  memcpy(hosts, config.hid_hosts, count * sizeof(hosts[0])); unlock(); return count;
 }
 
 bool device_config_add_hid_host(const uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE],
                                 const uint8_t key[32]) {
-  uint8_t derived_id[DEVICE_CONFIG_HID_KEY_ID_SIZE];
-  derive_key_id(key, derived_id);
-  if (memcmp(id, derived_id, sizeof(derived_id)) != 0) {
-    memset(derived_id, 0, sizeof(derived_id));
-    return false;
+  if (!id || !key) return false;
+  uint8_t derived[DEVICE_CONFIG_HID_KEY_ID_SIZE]; derive_key_id(key, derived);
+  bool valid_id = memcmp(id, derived, sizeof(derived)) == 0;
+  memset(derived, 0, sizeof(derived)); if (!valid_id) return false;
+  lock(); stored_config_t candidate = config; size_t index = candidate.hid_host_count;
+  for (size_t i = 0; i < candidate.hid_host_count; i++) {
+    if (memcmp(candidate.hid_hosts[i].id, id, sizeof(candidate.hid_hosts[i].id)) == 0) { index = i; break; }
   }
-  memset(derived_id, 0, sizeof(derived_id));
-  size_t index = hid_host_count;
-  for (size_t i = 0; i < hid_host_count; i++) {
-    if (memcmp(hid_hosts[i].id, id, sizeof(hid_hosts[i].id)) == 0) {
-      index = i;
-      break;
-    }
-  }
-  if (index == DEVICE_CONFIG_MAX_HID_HOSTS) return false;
-  device_hid_host_t previous = hid_hosts[index];
-  size_t previous_count = hid_host_count;
-  memcpy(hid_hosts[index].id, id, sizeof(hid_hosts[index].id));
-  memcpy(hid_hosts[index].key, key, sizeof(hid_hosts[index].key));
-  if (index == hid_host_count) hid_host_count++;
-  if (save_hid_hosts()) {
-    memset(&previous, 0, sizeof(previous));
-    return true;
-  }
-  hid_hosts[index] = previous;
-  hid_host_count = previous_count;
-  return false;
+  if (index == DEVICE_CONFIG_MAX_HID_HOSTS) { unlock(); return false; }
+  memcpy(candidate.hid_hosts[index].id, id, sizeof(candidate.hid_hosts[index].id));
+  memcpy(candidate.hid_hosts[index].key, key, sizeof(candidate.hid_hosts[index].key));
+  if (index == candidate.hid_host_count) candidate.hid_host_count++;
+  bool ok = replace_locked(&candidate); unlock(); return ok;
 }
 
 bool device_config_remove_hid_host(const uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE]) {
-  for (size_t i = 0; i < hid_host_count; i++) {
-    if (memcmp(hid_hosts[i].id, id, sizeof(hid_hosts[i].id)) != 0) continue;
-    device_hid_host_t previous[DEVICE_CONFIG_MAX_HID_HOSTS];
-    size_t previous_count = hid_host_count;
-    device_mode_t previous_mode = current_mode;
-    memcpy(previous, hid_hosts, sizeof(previous));
-    if (i + 1 < hid_host_count) {
-      memmove(&hid_hosts[i], &hid_hosts[i + 1],
-              (hid_host_count - i - 1) * sizeof(hid_hosts[0]));
-    }
-    hid_host_count--;
-    memset(&hid_hosts[hid_host_count], 0, sizeof(hid_hosts[0]));
-    if (hid_host_count == 0 && current_mode == DEVICE_MODE_HID) {
-      current_mode = DEVICE_MODE_PIV;
-    }
-    if (save_hid_hosts()) {
-      memset(previous, 0, sizeof(previous));
-      return true;
-    }
-    memcpy(hid_hosts, previous, sizeof(hid_hosts));
-    hid_host_count = previous_count;
-    current_mode = previous_mode;
-    memset(previous, 0, sizeof(previous));
-    return false;
+  if (!id) return false;
+  lock(); stored_config_t candidate = config; size_t index = candidate.hid_host_count;
+  for (size_t i = 0; i < candidate.hid_host_count; i++) {
+    if (memcmp(candidate.hid_hosts[i].id, id, sizeof(candidate.hid_hosts[i].id)) == 0) { index = i; break; }
   }
-  return false;
-}
-
-uint8_t device_config_fingerprint_profile_views(void) {
-  return fingerprint_profile_views;
+  if (index == candidate.hid_host_count) { unlock(); return false; }
+  memmove(&candidate.hid_hosts[index], &candidate.hid_hosts[index + 1],
+          (candidate.hid_host_count - index - 1) * sizeof(candidate.hid_hosts[0]));
+  candidate.hid_host_count--; memset(&candidate.hid_hosts[candidate.hid_host_count], 0,
+                                    sizeof(candidate.hid_hosts[0]));
+  if (candidate.mode == DEVICE_MODE_HID && candidate.hid_host_count == 0) candidate.mode = DEVICE_MODE_PIV;
+  bool ok = replace_locked(&candidate); unlock(); return ok;
 }
 
 bool device_config_set_fingerprint_profile_views(uint8_t views) {
-  if (views > 5) return false;
-  nvs_handle_t handle;
-  if (nvs_open("device", NVS_READWRITE, &handle) != ESP_OK) return false;
-  esp_err_t result = views ? nvs_set_u8(handle, "finger_views", views)
-                           : nvs_erase_key(handle, "finger_views");
-  if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
-  if (result == ESP_OK) result = nvs_commit(handle);
-  nvs_close(handle);
-  if (result == ESP_OK) fingerprint_profile_views = views;
-  return result == ESP_OK;
+  lock(); stored_config_t candidate = config; candidate.fingerprint_profile_views = views;
+  bool ok = replace_locked(&candidate); unlock(); return ok;
 }
 
-uint16_t device_config_typing_delay_ms(void) { return typing_delay_ms; }
+uint16_t device_config_typing_delay_ms(void) { lock(); uint16_t value = config.typing_delay_ms; unlock(); return value; }
+bool device_config_set_typing_delay_ms(uint16_t value) { lock(); stored_config_t c = config; c.typing_delay_ms = value; bool ok = replace_locked(&c); unlock(); return ok; }
+bool device_config_submit_enter(void) { lock(); bool value = config.submit_enter; unlock(); return value; }
+bool device_config_set_submit_enter(bool value) { lock(); stored_config_t c = config; c.submit_enter = value; bool ok = replace_locked(&c); unlock(); return ok; }
+uint16_t device_config_touch_cooldown_ms(void) { lock(); uint16_t value = config.touch_cooldown_ms; unlock(); return value; }
+bool device_config_set_touch_cooldown_ms(uint16_t value) { lock(); stored_config_t c = config; c.touch_cooldown_ms = value; bool ok = replace_locked(&c); unlock(); return ok; }
 
-bool device_config_set_typing_delay_ms(uint16_t value) {
-  if (value < 1 || value > 100 || !save_u16("type_delay", value)) return false;
-  typing_delay_ms = value;
-  return true;
-}
-
-bool device_config_submit_enter(void) { return submit_enter; }
-
-bool device_config_set_submit_enter(bool value) {
-  if (!save_u8("submit_enter", value ? 1 : 0)) return false;
-  submit_enter = value;
-  return true;
-}
-
-uint16_t device_config_touch_cooldown_ms(void) { return touch_cooldown_ms; }
-
-bool device_config_set_touch_cooldown_ms(uint16_t value) {
-  if (value < 100 || value > 5000 || !save_u16("touch_cool", value)) return false;
-  touch_cooldown_ms = value;
-  return true;
+bool device_config_factory_reset(void) {
+  lock(); stored_config_t candidate; defaults(&candidate); bool ok = replace_locked(&candidate); unlock(); return ok;
 }
