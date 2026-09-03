@@ -297,6 +297,8 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("CFBundleShortVersionString", build)
         settings = (ROOT / "app" / "TinyTouch" / "DeviceManagementViews.swift").read_text()
         self.assertIn('LabeledContent("Version", value: version)', settings)
+        project = (ROOT / "app" / "TinyTouch.xcodeproj" / "project.pbxproj").read_text()
+        self.assertIn("objectVersion = 77;", project)
 
 if __name__ == "__main__":
     unittest.main()
