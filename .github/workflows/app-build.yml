@@ -58,7 +58,17 @@ jobs:
           security unlock-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Import Apple intermediate CAs so the certificate chain is valid.
+          # security find-identity -v only shows identities with a verifiable chain,
+          # and a fresh runner keychain may be missing these intermediates.
+          for url in \
+            "https://www.apple.com/certificateauthority/DeveloperIDCA.cer" \
+            "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"; do
+            curl -fsSL "$url" -o "$RUNNER_TEMP/apple-ca.cer"
+            security import "$RUNNER_TEMP/apple-ca.cer" -k "$keychain" -A 2>/dev/null || true
+          done
           security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -A -f pkcs12
+          security find-identity -v -p codesigning "$keychain" || true
           signing_identity="$(security find-identity -v -p codesigning "$keychain" | sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}).*/\1/p' | head -n 1)"
           [[ -n "$signing_identity" ]] || { echo "The release certificate contains no valid macOS code-signing identity." >&2; exit 1; }
           echo "MACOS_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
