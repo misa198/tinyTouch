@@ -66,6 +66,12 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn("piv_reload_keys()", piv)
         self.assertNotIn("char cert_9a[sizeof", piv)
 
+    def test_piv_certificates_are_usable_as_macos_identities(self) -> None:
+        piv = self.source("piv.c")
+        self.assertIn("MBEDTLS_X509_KU_DIGITAL_SIGNATURE", piv)
+        self.assertIn("MBEDTLS_OID_CLIENT_AUTH", piv)
+        self.assertIn("mbedtls_x509write_crt_set_ext_key_usage", piv)
+
     def test_fingerprint_auth_requires_presence(self) -> None:
         source = self.source("touch_pin_hid.c")
         self.assertIn("if (!present || !fingerprint_is_ready() || !tud_hid_ready())", source)
@@ -76,6 +82,11 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         source = self.source("config_console.c")
         self.assertIn("fingerprint_delete_all() && nvs_flash_erase()", source)
         self.assertIn('strcmp(command, "RESET FACTORY")', source)
+
+    def test_enrollment_emits_fingerprint_prompts(self) -> None:
+        source = self.source("config_console.c")
+        self.assertIn('"PROMPT %s"', source)
+        self.assertIn("fingerprint_enroll((uint16_t)slot, fingerprint_prompt)", source)
 
 
 if __name__ == "__main__":

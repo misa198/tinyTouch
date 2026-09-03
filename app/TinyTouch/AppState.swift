@@ -65,6 +65,7 @@ final class AppState: ObservableObject {
     private var pendingFactoryVerification: (id: String, locationID: Int?)?
     private var flashOnboardingVisibility = FlashOnboardingVisibility()
     private var newBoardFlashActive = false
+    private var newBoardFlashLocationID: Int?
     private var newBoardFactoryResetting = false
     private let legacyPlist = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/com.tinytouch.helper.plist")
@@ -81,10 +82,12 @@ final class AppState: ObservableObject {
         return devices.isEmpty ? "lock" : "lock.fill"
     }
     var isFirmwareWriting: Bool { firmware.phase == .writing }
+    var canRetryNewBoardFactoryReset: Bool { newBoardFlashActive && firmware.phase == .failed && !firmware.needsManualBoot }
 
     init() {
         onboardingComplete = defaults.bool(forKey: "onboardingComplete")
         backgroundEnabled = defaults.object(forKey: "backgroundEnabled") as? Bool ?? true
+        newBoardFlashLocationID = defaults.object(forKey: "newBoardFlashLocationID") as? Int
         launchAtLogin = SMAppService.mainApp.status == .enabled
         legacyHelperDetected = FileManager.default.fileExists(atPath: legacyPlist.path) || Self.legacyJobLoaded()
         Self.active = self
@@ -247,6 +250,21 @@ final class AppState: ObservableObject {
         }
     }
 
+    func retryNewBoardFactoryReset() {
+        guard !busy, canRetryNewBoardFactoryReset, let id = selectedID else { return }
+        busy = true; firmware.error = nil; firmware.message = "Checking tinyTouch before retrying factory reset…"
+        Task {
+            do {
+                manager.reconnect(id)
+                let status = try await waitForStatus(id: id)
+                busy = false; resetNewBoard(id: id, status: status)
+            } catch {
+                firmware.phase = .failed; firmware.error = error.localizedDescription
+                firmware.message = "Factory reset stopped safely."; busy = false
+            }
+        }
+    }
+
     private func flashFactory(device: DeviceViewState, imageURL: URL, manualBoot: Bool) async throws {
         guard let identity = manager.acquireExclusive(device.id) else { throw DeviceError.disconnected }
         defer { manager.releaseExclusive(device.id) }
@@ -256,6 +274,9 @@ final class AppState: ObservableObject {
             self?.firmware.progress = value
         }
         try? FileManager.default.removeItem(at: imageURL); firmwareImageURL = nil
+        if newBoardFlash, let locationID = identity.locationID {
+            newBoardFlashLocationID = locationID; defaults.set(locationID, forKey: "newBoardFlashLocationID")
+        }
         if !newBoardFlash { pendingFactoryVerification = (device.id, identity.locationID) }
         firmware.phase = .reconnect; firmware.progress = 1
         firmware.message = newBoardFlash
@@ -539,6 +560,7 @@ final class AppState: ObservableObject {
 
     private func beginSetupIfNeeded(_ status: DeviceStatus, id: String) {
         guard setup == nil, let device = devices.first(where: { $0.id == id }) else { return }
+        if let locationID = newBoardFlashLocationID, locationID == device.identity.locationID { newBoardFlashActive = true }
         if newBoardFlashActive {
             resetNewBoard(id: id, status: status)
             return
@@ -569,7 +591,7 @@ final class AppState: ObservableObject {
                 guard current.isFactoryDefault else {
                     throw DeviceError.response("Factory reset verification failed.")
                 }
-                newBoardFlashActive = false; showFlashOnboarding = false
+                newBoardFlashActive = false; newBoardFlashLocationID = nil; defaults.removeObject(forKey: "newBoardFlashLocationID"); showFlashOnboarding = false
                 beginSetupIfNeeded(current, id: id)
             } catch {
                 firmware.phase = .failed; firmware.error = error.localizedDescription
@@ -625,6 +647,8 @@ final class AppState: ObservableObject {
                 }
                 if current.fingerprintCount == 0 {
                     updateSetup(.enroll, "Touch the sensor to enroll your fingerprint.")
+                    showPrompt("PROMPT TOUCH", deviceID: id)
+                    defer { clearFingerprintPrompt(deviceID: id) }
                     _ = try await manager.command(deviceID: id, current.dialect.enroll(slot: 1), timeout: 50)
                 }
                 updateSetup(.verify, "Verifying setup…")
@@ -636,29 +660,33 @@ final class AppState: ObservableObject {
                     guard hosts.ids.contains(try await keyID(key)) else { throw DeviceError.response("This Mac was not found in the HID host list.") }
                     manager.markReady(id); completeSetup("HID is ready with your fingerprint.")
                 } else {
-                    if var setup { setup.provisioningComplete = true; self.setup = setup }
-                    busy = false; pairPIV(); return
+                    if var setup {
+                        setup.phase = .pair; setup.provisioningComplete = true; setup.canSkipPairing = true
+                        setup.message = "Unplug tinyTouch, plug it back in, then pair it with macOS."
+                        self.setup = setup
+                    }
+                    busy = false; return
                 }
             } catch { failSetup(error) }
             busy = false
         }
     }
 
-    private func waitForStatus(id: String, mode: SetupMode) async throws -> DeviceStatus {
+    private func waitForStatus(id: String, mode: SetupMode? = nil) async throws -> DeviceStatus {
         let deadline = Date().addingTimeInterval(8); var reconnected = false
         while Date() < deadline {
             do {
                 let current = try await status(id: id)
-                if current.mode == mode.rawValue { return current }
+                if mode == nil || current.mode == mode?.rawValue { return current }
             } catch {
                 if !reconnected { manager.reconnect(id); reconnected = true }
             }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
-        throw DeviceError.response("tinyTouch did not reconnect in \(mode.rawValue.uppercased()) mode.")
+        throw DeviceError.response(mode.map { "tinyTouch did not reconnect in \($0.rawValue.uppercased()) mode." } ?? "tinyTouch did not reconnect.")
     }
 
-    private func pairPIV() {
+    func pairPIV() {
         guard !busy, setup?.mode == .piv else { return }
         busy = true; updateSetup(.pair, "Opening macOS PIV pairing…")
         Task {

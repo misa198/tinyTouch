@@ -86,6 +86,12 @@ static bool require_authorized(void) {
 
 static void touch_prompt(void) { reply("EVENT TOUCH"); }
 
+static void fingerprint_prompt(const char *message) {
+  char line[32];
+  snprintf(line, sizeof(line), "PROMPT %s", message);
+  reply(line);
+}
+
 static void authorize(void) {
   int count = fingerprint_count();
   bool ok = count == 0 || (count > 0 && fingerprint_authorize_prompted(touch_prompt));
@@ -182,7 +188,7 @@ static void fingerprint_command(char *arguments) {
   uint32_t slot = 0;
   bool ok = false;
   if (strncmp(arguments, "ENROLL ", 7) == 0 && parse_u32(arguments + 7, UINT16_MAX, &slot)) {
-    ok = fingerprint_enroll((uint16_t)slot, NULL);
+    ok = fingerprint_enroll((uint16_t)slot, fingerprint_prompt);
   } else if (strncmp(arguments, "DELETE ", 7) == 0 && parse_u32(arguments + 7, UINT16_MAX, &slot)) {
     ok = fingerprint_delete((uint16_t)slot) && device_config_set_fingerprint_profile_views(0);
   } else if (strcmp(arguments, "CLEAR") == 0) {

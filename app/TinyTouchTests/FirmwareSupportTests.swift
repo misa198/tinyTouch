@@ -96,6 +96,23 @@ final class FirmwareSupportTests: XCTestCase {
         now.addTimeInterval(2); visibility.update(hasROM: false, now: now); XCTAssertFalse(visibility.visible)
     }
 
+    func testNewBoardResetFailureRetriesResetInsteadOfFlashing() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("TinyTouch/FirmwareViews.swift"))
+        XCTAssertTrue(source.contains("Button(\"Retry Factory Reset\") { app.retryNewBoardFactoryReset() }"))
+        let state = try String(contentsOf: root.appendingPathComponent("TinyTouch/AppState.swift"))
+        XCTAssertTrue(state.contains("manager.reconnect(id)"))
+        XCTAssertTrue(state.contains("let status = try await waitForStatus(id: id)"))
+        XCTAssertTrue(state.contains("showPrompt(\"PROMPT TOUCH\", deviceID: id)"))
+    }
+
+    func testNewBoardFlashPersistsItsPhysicalLocationUntilResetSucceeds() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("TinyTouch/AppState.swift"))
+        XCTAssertTrue(source.contains("newBoardFlashLocationID = locationID; defaults.set(locationID, forKey: \"newBoardFlashLocationID\")"))
+        XCTAssertTrue(source.contains("defaults.removeObject(forKey: \"newBoardFlashLocationID\")"))
+    }
+
     func testCBridgeRejectsMissingImageBeforeOpeningSerial() {
         var error = [CChar](repeating: 0, count: 128)
         XCTAssertEqual(tt_flash_factory("/dev/does-not-exist", "/does-not-exist", false, nil, nil, &error, error.count), Int32(TT_FLASH_IO))

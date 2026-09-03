@@ -53,7 +53,12 @@ struct SetupWizardView: View {
                 let current = steps.firstIndex(where: { $0.0 == setup.phase }) ?? 0
                 Label(step.1, systemImage: setup.phase == .complete || index < current ? "checkmark.circle.fill" : index == current && setup.error != nil ? "exclamationmark.circle.fill" : index == current ? "circle.inset.filled" : "circle").foregroundStyle(index <= current ? Color.primary : Color.secondary)
             }
-            if let error = setup.error {
+            if setup.phase == .pair && setup.provisioningComplete && setup.error == nil {
+                InformationDialog(title: "Reconnect tinyTouch",
+                                  message: "Unplug tinyTouch, plug it back in, then continue. This lets macOS discover the new PIV identity.",
+                                  icon: "cable.connector")
+                HStack { Button("I Reconnected — Pair with macOS") { app.pairPIV() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
+            } else if let error = setup.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).padding(.top, 8)
                 HStack { Button("Retry") { app.retrySetup() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Start Over") { mode = nil; password = ""; confirmation = ""; app.startOverSetup() }.disabled(app.busy); if setup.canSkipPairing { Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) } }
             } else { ProgressView().padding(.top, 8) }

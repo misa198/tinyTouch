@@ -59,6 +59,7 @@ struct NewBoardFlashView: View {
                 if app.firmware.phase == .reconnect { Label("Flash is complete. Unplug tinyTouch, then plug it back in. Setup starts automatically once it reconnects.", systemImage: "cable.connector").foregroundStyle(.secondary).frame(maxWidth: 420, alignment: .leading) }
                 else if app.firmware.phase == .complete { ProgressView().frame(maxWidth: 420) }
                 else if app.firmware.needsManualBoot { Button("Retry After BOOT + RESET") { app.retryManualFactoryFlash() }.buttonStyle(.borderedProminent).disabled(app.busy) }
+                else if app.canRetryNewBoardFactoryReset { Button("Retry Factory Reset") { app.retryNewBoardFactoryReset() }.buttonStyle(.borderedProminent).disabled(app.busy) }
                 else { Button(app.firmware.phase == .failed ? "Try Again" : "Download & Flash") { app.flashNewBoard() }.buttonStyle(.borderedProminent).disabled(app.busy) }
             }.padding(48).frame(maxWidth: 680).frame(maxWidth: .infinity)
         }
