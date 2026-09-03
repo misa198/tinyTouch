@@ -26,6 +26,7 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn('"misa198"', descriptors)
         self.assertIn('"misa198 tinyTouch"', descriptors)
         self.assertIn('"MISA198-TT-%02X', descriptors)
+        self.assertIn("0x42, 0x00, 0x02, 0x00", descriptors)
         self.assertIn("product_id=misa198.tinytouch.v1", self.source("config_console.c"))
 
     def test_persistence_swaps_one_live_config_blob(self) -> None:

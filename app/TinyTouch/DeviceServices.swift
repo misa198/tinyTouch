@@ -121,12 +121,9 @@ enum SetupValidation {
 }
 
 enum SCAuthResult {
-    static func identities(exitCode: Int32, output: String, error: String) -> String? {
-        guard exitCode == 0 else { return error.isEmpty ? "macOS could not inspect PIV identities." : error }
-        guard output.range(of: #"\b[0-9A-Fa-f]{40}\b"#, options: .regularExpression) != nil else {
-            return "macOS has not discovered the tinyTouch PIV identity yet."
-        }
-        return nil
+    static func identities(exitCode _: Int32, output: String, error: String) -> String? {
+        if output.range(of: #"\b[0-9A-Fa-f]{40}\b"#, options: .regularExpression) != nil { return nil }
+        return error.isEmpty ? "macOS has not discovered the tinyTouch PIV identity yet." : error
     }
 
     static func pairing(exitCode: Int32, error: String) -> String? {

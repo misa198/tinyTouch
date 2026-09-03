@@ -186,6 +186,7 @@ final class HIDProtocolTests: XCTestCase {
     func testPIVPairingFailureKeepsProvisioningReady() {
         XCTAssertNil(SCAuthResult.identities(exitCode: 0, output: "AABBCCDDEEFF00112233445566778899AABBCCDD", error: ""))
         XCTAssertNotNil(SCAuthResult.identities(exitCode: 0, output: "No identities", error: ""))
+        XCTAssertNotNil(SCAuthResult.identities(exitCode: 1, output: "", error: ""))
         XCTAssertNotNil(SCAuthResult.pairing(exitCode: 1, error: "cancelled"))
         var state = DeviceSetupState(deviceID: "TT-A", deviceName: "tinyTouch TT-A", mode: .piv)
         state.recordPairingFailure("cancelled")

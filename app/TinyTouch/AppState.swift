@@ -65,6 +65,7 @@ final class AppState: ObservableObject {
     private var pendingFactoryVerification: (id: String, locationID: Int?)?
     private var flashOnboardingVisibility = FlashOnboardingVisibility()
     private var newBoardFlashActive = false
+    private var newBoardFactoryResetting = false
     private let legacyPlist = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/com.tinytouch.helper.plist")
 
@@ -206,7 +207,7 @@ final class AppState: ObservableObject {
             firmware = FirmwareViewState(phase: .failed, message: "Connect an ESP32-S3 in download mode first.", error: "No board in download mode is selected.")
             return
         }
-        busy = true; newBoardFlashActive = true; showFlashOnboarding = true
+        busy = true; newBoardFlashActive = true; newBoardFactoryResetting = false; showFlashOnboarding = true
         firmwareUpdate = nil; firmwareImageURL = nil
         firmware = FirmwareViewState(phase: .checking, target: device.name, current: "ROM mode",
             message: "Fetching the reviewed firmware…")
@@ -236,8 +237,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    func finishNewBoardFlash() { newBoardFlashActive = false; showFlashOnboarding = flashOnboardingVisibility.visible }
-
     func retryManualFactoryFlash() {
         guard !busy, firmware.needsManualBoot, let imageURL = firmwareImageURL, let device = selectedDevice else { return }
         busy = true; firmware.error = nil; firmware.needsManualBoot = false
@@ -251,14 +250,17 @@ final class AppState: ObservableObject {
     private func flashFactory(device: DeviceViewState, imageURL: URL, manualBoot: Bool) async throws {
         guard let identity = manager.acquireExclusive(device.id) else { throw DeviceError.disconnected }
         defer { manager.releaseExclusive(device.id) }
+        let newBoardFlash = newBoardFlashActive
         firmware.phase = .writing; firmware.message = manualBoot ? "Connecting to the manually selected ROM bootloader…" : "Entering the bootloader and writing the factory image…"
         try await FirmwareFlasher.flash(port: identity.port, imageURL: imageURL, manualBoot: manualBoot) { [weak self] value in
             self?.firmware.progress = value
         }
         try? FileManager.default.removeItem(at: imageURL); firmwareImageURL = nil
-        pendingFactoryVerification = (device.id, identity.locationID)
+        if !newBoardFlash { pendingFactoryVerification = (device.id, identity.locationID) }
         firmware.phase = .reconnect; firmware.progress = 1
-        firmware.message = "Factory image verified. Reconnect tinyTouch normally to finish factory-default verification."
+        firmware.message = newBoardFlash
+            ? "Firmware is installed. Unplug tinyTouch, then plug it back in to continue setup."
+            : "Factory image verified. Reconnect tinyTouch normally to finish factory-default verification."
     }
 
     private static func download(_ url: URL) async throws -> Data {
@@ -366,7 +368,7 @@ final class AppState: ObservableObject {
         Task {
             defer { clearFingerprintPrompt(deviceID: id); busy = false }
             do {
-                let current = try await status(id: id)
+                let current = try await self.status(id: id)
                 guard let command = current.dialect.factoryReset else {
                     throw DeviceError.response("Factory reset requires protocol 6 firmware.")
                 }
@@ -469,7 +471,7 @@ final class AppState: ObservableObject {
 
     private func update(_ identities: [DeviceIdentity], opened: Set<String>, ready: Set<String>, errors: [String: Error]) {
         flashOnboardingVisibility.update(hasROM: identities.contains { $0.kind == .rom })
-        showFlashOnboarding = flashOnboardingVisibility.visible || newBoardFlashActive
+        showFlashOnboarding = setup == nil && (flashOnboardingVisibility.visible || newBoardFlashActive)
         let previous = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
         let retainedROM = showFlashOnboarding && !identities.contains { $0.kind == .rom }
             ? previous[selectedID ?? ""].flatMap { $0.identity.kind == .rom ? $0 : nil }
@@ -536,11 +538,44 @@ final class AppState: ObservableObject {
     }
 
     private func beginSetupIfNeeded(_ status: DeviceStatus, id: String) {
-        guard setup == nil, status.isFactoryDefault,
-              let device = devices.first(where: { $0.id == id }) else { return }
+        guard setup == nil, let device = devices.first(where: { $0.id == id }) else { return }
+        if newBoardFlashActive {
+            resetNewBoard(id: id, status: status)
+            return
+        }
+        guard status.isFactoryDefault else { return }
         selectedID = id; keyboardMode = KeyboardSettingsStore().load(deviceID: id).keyboardLayout
+        newBoardFlashActive = false; showFlashOnboarding = false
         setup = DeviceSetupState(deviceID: id, deviceName: device.name)
         showWindow()
+    }
+
+    private func resetNewBoard(id: String, status: DeviceStatus) {
+        guard !newBoardFactoryResetting else { return }
+        newBoardFactoryResetting = true; busy = true
+        firmware.message = "Resetting tinyTouch to factory defaults…"
+        Task {
+            defer { newBoardFactoryResetting = false; busy = false }
+            do {
+                guard let command = status.dialect.factoryReset else {
+                    throw DeviceError.response("Factory reset requires protocol 6 firmware.")
+                }
+                guard status.sensorReady else {
+                    throw DeviceError.response("The fingerprint sensor must be available to factory-reset tinyTouch.")
+                }
+                try await unlock(id, dialect: status.dialect)
+                _ = try await manager.command(deviceID: id, command, timeout: 15)
+                let current = try await self.status(id: id)
+                guard current.isFactoryDefault else {
+                    throw DeviceError.response("Factory reset verification failed.")
+                }
+                newBoardFlashActive = false; showFlashOnboarding = false
+                beginSetupIfNeeded(current, id: id)
+            } catch {
+                firmware.phase = .failed; firmware.error = error.localizedDescription
+                firmware.message = "Factory reset stopped safely."
+            }
+        }
     }
 
     private func runSetup() {
@@ -584,7 +619,7 @@ final class AppState: ObservableObject {
                 if mode == .piv && current.fields["piv"] != "ready" {
                     updateSetup(.createIdentity, "Creating the PIV identity…")
                     guard let command = current.dialect.pivCreate else { throw DeviceError.response("PIV setup requires protocol 6 firmware.") }
-                    _ = try await manager.command(deviceID: id, command, timeout: 20)
+                    _ = try await manager.command(deviceID: id, command, timeout: 90)
                     current = try await status(id: id)
                     guard current.fields["piv"] == "ready" else { throw DeviceError.response("The PIV identity was not created.") }
                 }
@@ -645,10 +680,18 @@ final class AppState: ObservableObject {
                     String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
                     String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        let identities = run(["identities"])
-        if let failure = SCAuthResult.identities(exitCode: identities.0, output: identities.1, error: identities.2) { return failure }
-        let pairing = run(["pairing_ui", "-f"])
-        return SCAuthResult.pairing(exitCode: pairing.0, error: pairing.2)
+        let deadline = Date().addingTimeInterval(10)
+        var failure = "macOS did not discover the tinyTouch PIV identity. Unplug and reconnect tinyTouch, then choose Retry."
+        while Date() < deadline {
+            let identities = run(["identities"])
+            if let result = SCAuthResult.identities(exitCode: identities.0, output: identities.1, error: identities.2) {
+                if !identities.2.isEmpty { return result }
+                failure = result; Thread.sleep(forTimeInterval: 0.5); continue
+            }
+            let pairing = run(["pairing_ui", "-f"])
+            return SCAuthResult.pairing(exitCode: pairing.0, error: pairing.2)
+        }
+        return failure
     }
 
     private func updateSetup(_ phase: DeviceSetupPhase, _ message: String) {

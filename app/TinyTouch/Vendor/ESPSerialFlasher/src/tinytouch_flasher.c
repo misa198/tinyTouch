@@ -40,7 +40,6 @@ static void message(char *out, size_t size, const char *format, ...) {
 static int open_serial(const char *path, uint32_t baud) {
     int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) return -1;
-    fcntl(fd, F_SETFL, 0);
     struct termios settings;
     if (tcgetattr(fd, &settings)) {
         close(fd);

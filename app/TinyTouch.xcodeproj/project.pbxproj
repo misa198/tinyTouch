@@ -266,12 +266,12 @@
 					"SERIAL_FLASHER_BOOT_INVERT=false",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/include",
 					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/private_include",
 				);
+				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -315,12 +315,12 @@
 					"SERIAL_FLASHER_BOOT_INVERT=false",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/include",
 					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/private_include",
 				);
+				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
