@@ -68,6 +68,13 @@ jobs:
             security import "$RUNNER_TEMP/apple-ca.cer" -k "$keychain" -A 2>/dev/null || true
           done
           security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -A -f pkcs12
+          echo "--- p12 contents (key present?) ---"
+          openssl pkcs12 -info -in "$certificate" -passin pass:"$CERTIFICATE_PASSWORD" -nokeys -noout 2>&1 || true
+          openssl pkcs12 -in "$certificate" -passin pass:"$CERTIFICATE_PASSWORD" -nocerts -noout 2>&1 \
+            && echo "Private key: FOUND" || echo "Private key: NOT FOUND (re-export the certificate with its private key)"
+          echo "--- all identities (valid and invalid) ---"
+          security find-identity -p codesigning "$keychain" || true
+          echo "--- valid identities only ---"
           security find-identity -v -p codesigning "$keychain" || true
           signing_identity="$(security find-identity -v -p codesigning "$keychain" | sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}).*/\1/p' | head -n 1)"
           [[ -n "$signing_identity" ]] || { echo "The release certificate contains no valid macOS code-signing identity." >&2; exit 1; }
