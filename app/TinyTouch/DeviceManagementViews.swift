@@ -3,8 +3,10 @@ import SwiftUI
 struct OverviewView: View {
     @EnvironmentObject private var app: AppState
     var body: some View { Page(title: "Overview", icon: "dot.radiowaves.left.and.right") { availableDevice(app) { device, status in
-        Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) { row("Connection", device.connection.rawValue.capitalized); row("Firmware", status.firmwareVersion); row("Protocol", String(status.protocol)); row("Mode", status.mode.uppercased()); row("Sensor", status.sensorReady ? "Ready" : status.sensor); row("Fingerprints", status.fingerprints); row("HID computers", String(status.hidHosts)) }
-        if status.mode == "piv" { Label(status.fields["piv"] == "ready" ? "PIV identity is ready." : "PIV identity is not configured.", systemImage: "info.circle").foregroundStyle(.secondary) }
+        Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
+            row("connection", device.connection.rawValue)
+            ForEach(status.fields.keys.sorted(), id: \.self) { key in row(key, status.fields[key]!) }
+        }
         DeviceMessageView()
     } } }
     private func row(_ label: String, _ value: String) -> some View { GridRow { Text(label).foregroundStyle(.secondary); Text(value).textSelection(.enabled) } }
@@ -35,14 +37,17 @@ struct FingerprintsView: View {
     @EnvironmentObject private var app: AppState
     @State private var deletion: Deletion?
     private var count: Int? { app.selectedDevice?.status?.fingerprintCount.map { min(max($0, 0), 5) } }
+    private var slots: [Int]? { app.selectedDevice?.status?.fingerprintSlots }
+    private var nextSlot: Int? { app.selectedDevice?.status?.nextFingerprintSlot }
     enum Deletion: Identifiable { case fingerprint(Int), all; var id: String { switch self { case .fingerprint(let number): "fingerprint-\(number)"; case .all: "all" } } }
     var body: some View { Page(title: "Fingerprints", icon: "touchid") { availableDevice(app) { _, status in
         if !status.sensorReady { RequirementPlaceholder(icon: "touchid", title: "Fingerprint sensor unavailable", description: "The fingerprint sensor must be working to manage fingerprints.") }
         else {
             Text("Configuration changes require an enrolled fingerprint when the device is already secured.").foregroundStyle(.secondary)
             if let count { Text("Device reports \(count) enrolled fingerprint\(count == 1 ? "" : "s").").foregroundStyle(.secondary) }
-            if let count, count > 0 { VStack(spacing: 0) { ForEach(1...count, id: \.self) { number in HStack { Label("Fingerprint \(number)", systemImage: "touchid"); Spacer(); Button("Delete", role: .destructive) { deletion = .fingerprint(number) } }.padding(.vertical, 10); if number < count { Divider() } } }.disabled(app.busy) }
-            if let count, count < 5 { Button("Add Fingerprint") { app.enroll(slot: count + 1) }.disabled(app.busy) }
+            if let slots, !slots.isEmpty { VStack(spacing: 0) { ForEach(slots, id: \.self) { number in HStack { Label("Fingerprint \(number)", systemImage: "touchid"); Spacer(); Button("Delete", role: .destructive) { deletion = .fingerprint(number) } }.padding(.vertical, 10); if number != slots.last { Divider() } } }.disabled(app.busy) }
+            if slots == nil, let count, count > 0 { Text("This firmware does not report fingerprint slot IDs. Update firmware to manage individual fingerprints safely.").foregroundStyle(.secondary) }
+            if let nextSlot { Button("Add Fingerprint") { app.enroll(slot: nextSlot) }.disabled(app.busy) }
             if let count, count > 0 { Button("Delete All Fingerprints", role: .destructive) { deletion = .all }.disabled(app.busy) }
             DeviceMessageView()
         }
@@ -79,6 +84,15 @@ struct SettingsView: View {
             Toggle("Enable HID background service", isOn: Binding(get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }))
             Toggle("Launch at login", isOn: Binding(get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }))
             Picker("Keyboard mapping", selection: Binding(get: { app.keyboardMode }, set: { app.setKeyboardMode($0) })) { ForEach(KeyboardMode.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 360).disabled(app.selectedDevice == nil)
+            if let status = app.selectedDevice?.status, status.mode == "hid" {
+                Divider(); Text("HID Behavior").font(.headline)
+                if let delay = status.typingDelayMS, let submit = status.submitEnter, let cooldown = status.touchCooldownMS {
+                    HIDDeviceSettingsView(typingDelayMS: delay, submitEnter: submit, touchCooldownMS: cooldown)
+                        .id("\(app.selectedID ?? "")-\(delay)-\(submit)-\(cooldown)")
+                } else {
+                    Text("Update this device to firmware that reports HID settings.").foregroundStyle(.secondary)
+                }
+            }
         }
         Divider(); Text("Device Mode").font(.headline)
         if let status = app.selectedDevice?.status, let current = SetupMode(rawValue: status.mode) {
@@ -102,4 +116,32 @@ struct SettingsView: View {
         if let mode = pendingMode { Button("Switch to \(mode.rawValue.uppercased())") { pendingMode = nil; app.changeMode(to: mode) } }
     } message: { Text("Touch the fingerprint sensor to authorize the change. Existing PIV keys, HID computers, fingerprints, and credentials will be preserved.") }
     .alert("Factory reset selected tinyTouch?", isPresented: $confirmingFactoryReset) { Button("Cancel", role: .cancel) {}; Button("Factory Reset", role: .destructive) { app.factoryReset() } } message: { Text("This permanently erases every fingerprint, PIV key, trusted computer, and device setting. TinyTouch will return to its unconfigured PIV state. Matching credentials and settings on this Mac will also be deleted.") } }
+}
+
+private struct HIDDeviceSettingsView: View {
+    @EnvironmentObject private var app: AppState
+    let originalTypingDelayMS: Int
+    let originalSubmitEnter: Bool
+    let originalTouchCooldownMS: Int
+    @State private var typingDelayMS: Int
+    @State private var submitEnter: Bool
+    @State private var touchCooldownMS: Int
+
+    init(typingDelayMS: Int, submitEnter: Bool, touchCooldownMS: Int) {
+        originalTypingDelayMS = typingDelayMS; originalSubmitEnter = submitEnter
+        originalTouchCooldownMS = touchCooldownMS
+        _typingDelayMS = State(initialValue: typingDelayMS); _submitEnter = State(initialValue: submitEnter)
+        _touchCooldownMS = State(initialValue: touchCooldownMS)
+    }
+
+    var body: some View {
+        Stepper("Typing delay: \(typingDelayMS) ms", value: $typingDelayMS, in: 1...100)
+        Toggle("Press Enter after typing", isOn: $submitEnter)
+        Stepper("Touch cooldown: \(touchCooldownMS) ms", value: $touchCooldownMS, in: 100...5000, step: 100)
+        Button("Apply") { app.setHIDSettings(typingDelayMS: typingDelayMS, submitEnter: submitEnter, touchCooldownMS: touchCooldownMS) }
+            .buttonStyle(.borderedProminent)
+            .disabled(app.busy || !app.backgroundEnabled ||
+                      (typingDelayMS == originalTypingDelayMS && submitEnter == originalSubmitEnter && touchCooldownMS == originalTouchCooldownMS))
+        Text("Applying requires fingerprint authorization and takes effect immediately.").foregroundStyle(.secondary)
+    }
 }

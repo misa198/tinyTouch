@@ -45,6 +45,27 @@ struct DeviceStatus: Equatable {
     var sensor: String { fields["sensor"] ?? "unknown" }
     var fingerprints: String { fields["fingerprints"] ?? "unknown" }
     var fingerprintCount: Int? { Int(fingerprints) }
+    var fingerprintSlots: [Int]? {
+        guard let raw = fields["fingerprint_slots"] else { return nil }
+        if raw == "none" { return [] }
+        let slots = raw.split(separator: ",").compactMap { Int($0) }
+        guard !slots.isEmpty, slots.count == raw.split(separator: ",").count,
+              Set(slots).count == slots.count, slots.allSatisfy({ (1...5).contains($0) }) else { return nil }
+        return slots.sorted()
+    }
+    var nextFingerprintSlot: Int? {
+        if let fingerprintSlots { return (1...5).first { !fingerprintSlots.contains($0) } }
+        return fingerprintCount == 0 ? 1 : nil
+    }
+    var typingDelayMS: Int? {
+        fields["type_delay"].flatMap(Int.init).flatMap { (1...100).contains($0) ? $0 : nil }
+    }
+    var submitEnter: Bool? {
+        fields["submit_enter"].flatMap { $0 == "1" ? true : ($0 == "0" ? false : nil) }
+    }
+    var touchCooldownMS: Int? {
+        fields["cooldown"].flatMap(Int.init).flatMap { (100...5000).contains($0) ? $0 : nil }
+    }
     var sensorReady: Bool { ["ok", "ready"].contains(sensor) }
     var hidHosts: Int { Int(fields["hid_hosts"] ?? fields["hosts"] ?? "0") ?? 0 }
     var hidKeyConfigured: Bool { fields["hid_key"] == "configured" }

@@ -398,6 +398,24 @@ int fingerprint_count(void) {
   return ok ? ((int)data[0] << 8) | data[1] : -1;
 }
 
+int fingerprint_slot_mask(void) {
+  if (!fp_take(2000)) return -1;
+  uint8_t confirm = 0xff;
+  uint8_t page = 0;
+  uint8_t table[32];
+  size_t table_len = sizeof(table);
+  bool ok = fp_command(0x1f, &page, sizeof(page), &confirm, table, &table_len, 2000) &&
+            confirm == 0x00 && table_len == sizeof(table);
+  int mask = 0;
+  if (ok) {
+    for (uint16_t slot = START_SLOT; slot <= END_SLOT; slot++) {
+      if (table[slot / 8] & (1u << (slot % 8))) mask |= 1u << (slot - START_SLOT);
+    }
+  }
+  fp_give();
+  return ok ? mask : -1;
+}
+
 static bool wait_capture_template(uint8_t buffer_id, uint32_t timeout_ms) {
   TickType_t start = xTaskGetTickCount();
   TickType_t deadline = pdMS_TO_TICKS(timeout_ms);

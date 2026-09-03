@@ -344,6 +344,32 @@ final class AppState: ObservableObject {
         perform(deviceID: id) { [self] in try await readStatus(id: id); return "Status updated." }
     }
 
+    func setHIDSettings(typingDelayMS: Int, submitEnter: Bool, touchCooldownMS: Int) {
+        guard let id = selectedID else { return }
+        perform(deviceID: id) { [self] in
+            guard (1...100).contains(typingDelayMS), (100...5000).contains(touchCooldownMS) else {
+                throw DeviceError.response("HID settings are outside the supported range.")
+            }
+            let current = try await status(id: id)
+            guard current.protocolVersion == 6, current.mode == "hid",
+                  current.typingDelayMS != nil, current.submitEnter != nil, current.touchCooldownMS != nil else {
+                throw DeviceError.response("Update this device to firmware that supports HID settings.")
+            }
+            try await unlock(id, dialect: current.dialect)
+            for command in [
+                "SET TYPE_DELAY \(typingDelayMS)",
+                "SET SUBMIT_ENTER \(submitEnter ? 1 : 0)",
+                "SET COOLDOWN \(touchCooldownMS)",
+            ] { _ = try await manager.command(deviceID: id, command) }
+            let updated = try await readStatus(id: id)
+            guard updated.typingDelayMS == typingDelayMS, updated.submitEnter == submitEnter,
+                  updated.touchCooldownMS == touchCooldownMS else {
+                throw DeviceError.response("The device did not confirm the new HID settings.")
+            }
+            return "HID settings saved."
+        }
+    }
+
     func changeMode(to mode: SetupMode) {
         guard let id = selectedID, let device = selectedDevice else { return }
         perform(deviceID: id) { [self] in

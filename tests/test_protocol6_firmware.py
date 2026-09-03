@@ -103,6 +103,14 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn('"PROMPT %s"', source)
         self.assertIn("fingerprint_enroll((uint16_t)slot, fingerprint_prompt)", source)
 
+    def test_status_reports_exact_fingerprint_slots_and_live_settings(self) -> None:
+        console = self.source("config_console.c")
+        fingerprint = self.source("fingerprint.c")
+        self.assertIn("fingerprint_slot_mask()", console)
+        self.assertIn("fingerprint_slots=%s", console)
+        self.assertIn("type_delay=%u submit_enter=%u cooldown=%u", console)
+        self.assertIn("fp_command(0x1f", fingerprint)
+
 
 if __name__ == "__main__":
     unittest.main()
