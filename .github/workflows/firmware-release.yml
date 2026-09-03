@@ -73,7 +73,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           bundle="tinytouch-firmware-${version}.tar.gz"
           (cd dist && sha256sum --check --strict "$bundle.sha256")
-          flags=(--verify-tag --generate-notes)
+          flags=(--verify-tag --generate-notes --latest=false)
           [[ "$version" = *-* ]] && flags+=(--prerelease)
           test -f dist/release/release-manifest.json
           test -f dist/release/tiny_touch_unified.bin

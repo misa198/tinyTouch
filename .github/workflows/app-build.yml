@@ -52,6 +52,8 @@ jobs:
             echo "Built app version $built_version does not match release version $APP_VERSION." >&2
             exit 1
           }
+          codesign --force --deep --options runtime --sign - "$app"
+          codesign --verify --deep --strict "$app"
           mkdir -p dist
           bundle=TinyTouch-macOS.zip
           ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$bundle"

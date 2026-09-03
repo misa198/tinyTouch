@@ -1,6 +1,6 @@
 ## interested in preassembled versions? pre order now:
 
-[![Download TinyTouch for macOS](https://img.shields.io/badge/download-TinyTouch_for_macOS-007AFF?logo=apple&logoColor=white)](https://github.com/misa198/tinyTouch/releases)
+[![Download TinyTouch for macOS](https://img.shields.io/badge/download-TinyTouch_for_macOS-007AFF?logo=apple&logoColor=white)](https://github.com/misa198/tinyTouch/releases/latest/download/TinyTouch-macOS.zip)
 
 <img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
 
@@ -141,8 +141,8 @@ fingerprint enrollment, HID credentials, PIV identities, and macos pairing.
 
 ### install the mac app
 
-1. download `TinyTouch-macOS.zip` from the latest
-   [`app-v*` release](https://github.com/misa198/tinyTouch/releases).
+1. download `TinyTouch-macOS.zip` from the newest
+   [`app-v*` release](https://github.com/misa198/tinyTouch/releases/latest/download/TinyTouch-macOS.zip).
 2. unzip it and move `TinyTouch.app` to `/Applications`.
 3. control-click the app and choose **Open** the first time.
 4. leave **Launch TinyTouch at login** enabled. HID mode needs the app running
