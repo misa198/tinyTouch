@@ -83,12 +83,12 @@ const uint8_t tiny_touch_configuration_descriptor[] = {
                      EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
-static char tiny_touch_serial[20] = "TT-PIV-PROTOTYPE";
+static char tiny_touch_serial[32] = "MISA198-TT-PROTOTYPE";
 
 char const *tiny_touch_string_descriptors[] = {
   (const char[]){0x09, 0x04},
-  "tinyTouch",
-  "tinyTouch",
+  "misa198",
+  "misa198 tinyTouch",
   tiny_touch_serial,
 };
 
@@ -98,6 +98,6 @@ const int tiny_touch_string_descriptor_count =
 void tiny_touch_init_serial(void) {
   uint8_t mac[6];
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) return;
-  snprintf(tiny_touch_serial, sizeof(tiny_touch_serial), "TT-%02X%02X%02X%02X%02X%02X",
+  snprintf(tiny_touch_serial, sizeof(tiny_touch_serial), "MISA198-TT-%02X%02X%02X%02X%02X%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }

@@ -18,9 +18,11 @@ PROTOCOL = 6
 SECURE_VERSION = 0
 FLASH_BYTES = 4 * 1024 * 1024
 APP_DESCRIPTION_MAGIC = 0xABCD5432
+PRODUCT_MARKER = b"misa198.tinytouch.v1"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 BUILD_PATTERN = re.compile(r"[0-9a-f]{12}")
 NAME_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
+SEMVER_PATTERN = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?")
 EXPECTED_IMAGES = {
     "factory": {
         0x0: "bootloader.bin",
@@ -54,6 +56,55 @@ def load_json(path: Path) -> dict:
         raise IntegrityError(f"invalid JSON file: {path}") from exc
     require(isinstance(value, dict), f"JSON root must be an object: {path}")
     return value
+
+
+def semver(value: object, field: str) -> tuple[tuple[int, int, int], tuple[str, ...]]:
+    require(isinstance(value, str) and SEMVER_PATTERN.fullmatch(value) is not None,
+            f"invalid {field}")
+    without_build = value.split("+", 1)[0]
+    core, separator, prerelease = without_build.partition("-")
+    return tuple(int(part) for part in core.split(".")), tuple(prerelease.split(".")) if separator else ()
+
+
+def semver_less(left: tuple[tuple[int, int, int], tuple[str, ...]],
+                right: tuple[tuple[int, int, int], tuple[str, ...]]) -> bool:
+    if left[0] != right[0]:
+        return left[0] < right[0]
+    if not left[1] or not right[1]:
+        return bool(left[1]) and not right[1]
+    for first, second in zip(left[1], right[1]):
+        if first == second:
+            continue
+        if first.isdigit() and second.isdigit():
+            return int(first) < int(second)
+        if first.isdigit() != second.isdigit():
+            return first.isdigit()
+        return first < second
+    return len(left[1]) < len(right[1])
+
+
+def validate_channel(path: Path) -> dict:
+    channel = load_json(path)
+    require(channel.get("schema") == 1 and set(channel) == {"schema", "releases"},
+            "invalid firmware channel schema")
+    releases = channel.get("releases")
+    require(isinstance(releases, list) and releases, "firmware channel is empty")
+    seen: set[str] = set()
+    for release in releases:
+        require(isinstance(release, dict) and set(release) == {
+            "version", "minAppVersion", "maxAppVersionExclusive", "manifest"
+        }, "invalid firmware channel release")
+        version = release["version"]
+        semver(version, "firmware version")
+        minimum = semver(release["minAppVersion"], "minimum app version")
+        maximum = semver(release["maxAppVersionExclusive"], "maximum app version")
+        require(semver_less(minimum, maximum), f"empty app compatibility range for {version}")
+        require(version not in seen, f"duplicate firmware version {version}")
+        seen.add(version)
+        url = release["manifest"]
+        require(isinstance(url, str) and re.fullmatch(r"https://[^/?#]+/[^?#]+", url) is not None,
+                f"invalid HTTPS manifest URL for {version}")
+    return channel
 
 
 def checked_name(value: object, field: str) -> str:
@@ -109,6 +160,8 @@ def validate_app(path: Path, version: str, build: str, kind: str) -> None:
             f"embedded secure version mismatch in {path.name}")
     require(build.encode("ascii") in path.read_bytes(),
             f"build ID {build} is not embedded in {path.name}")
+    require(PRODUCT_MARKER in path.read_bytes(),
+            f"product identity is not embedded in {path.name}")
 
 
 def asset_path(root: Path, kind: str, name: str, flat: bool) -> Path:
@@ -184,6 +237,8 @@ def validate_release(root: Path, commit: str, *, flat: bool = False,
                      require_cli: bool = True) -> dict:
     require(re.fullmatch(r"[0-9a-f]{40}", commit) is not None, "commit must be a full SHA")
     manifest = load_json(root / "release-manifest.json")
+    require(manifest.get("product") == PRODUCT_MARKER.decode("ascii"),
+            "release product identity mismatch")
     version = manifest.get("version")
     protocol = manifest.get("protocol")
     build = manifest.get("build")
@@ -288,10 +343,14 @@ def main() -> int:
     extract = subparsers.add_parser("extract")
     extract.add_argument("archive", type=Path)
     extract.add_argument("destination", type=Path)
+    channel = subparsers.add_parser("channel")
+    channel.add_argument("path", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "extract":
             safe_extract(args.archive.resolve(), args.destination.resolve())
+        elif args.command == "channel":
+            validate_channel(args.path.resolve())
         else:
             directory = args.directory.resolve()
             validate_release(

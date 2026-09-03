@@ -38,10 +38,10 @@ from tinytouch_runtime import (
 )
 
 
-SERVICE = "tinyTouch"
-ACCOUNT = "tinyTouch"
-PAIRING_SERVICE = "tinyTouch-pairing"
-STATE_DIR = Path.home() / "Library" / "Application Support" / "tinyTouch"
+SERVICE = "misa198.TinyTouch.password"
+ACCOUNT = "misa198.TinyTouch"
+PAIRING_SERVICE = "misa198.TinyTouch.pairing"
+STATE_DIR = Path.home() / "Library" / "Application Support" / "misa198.TinyTouch"
 SUSPEND_PATH = STATE_DIR / "helper-suspend"
 SUSPEND_ACK_PATH = STATE_DIR / "helper-suspend-ack"
 MAX_SEEN_NONCES = 256
@@ -629,8 +629,10 @@ def device_endpoints() -> list[DeviceEndpoint]:
         if not (
             item.vid == 0x303A
             and item.pid == 0x4001
+            and item.manufacturer == "misa198"
+            and item.product == "misa198 tinyTouch"
             and isinstance(item.serial_number, str)
-            and re.fullmatch(r"TT-[0-9A-Fa-f]{12}", item.serial_number)
+            and re.fullmatch(r"MISA198-TT-[0-9A-Fa-f]{12}", item.serial_number)
         ):
             continue
         endpoints.append(

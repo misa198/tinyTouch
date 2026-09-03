@@ -35,7 +35,7 @@ struct ReplayState: Codable, Equatable {
 
 struct ReplayStateStore {
     var directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("tinyTouch", isDirectory: true)
+        .appendingPathComponent("misa198.TinyTouch", isDirectory: true)
 
     func load(deviceID: String) -> ReplayState {
         guard let data = try? Data(contentsOf: path(deviceID)),
@@ -46,6 +46,11 @@ struct ReplayStateStore {
     func save(_ state: ReplayState, deviceID: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(state).write(to: path(deviceID), options: .atomic)
+    }
+
+    func remove(deviceID: String) throws {
+        let url = path(deviceID)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 
     private func path(_ deviceID: String) -> URL {
@@ -72,7 +77,7 @@ struct KeyboardSettings: Codable, Equatable {
 
 struct KeyboardSettingsStore {
     var directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("tinyTouch", isDirectory: true)
+        .appendingPathComponent("misa198.TinyTouch", isDirectory: true)
 
     func load(deviceID: String) -> KeyboardSettings {
         guard let data = try? Data(contentsOf: path(deviceID)),
@@ -83,6 +88,11 @@ struct KeyboardSettingsStore {
     func save(_ value: KeyboardSettings, deviceID: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(value).write(to: path(deviceID), options: .atomic)
+    }
+
+    func remove(deviceID: String) throws {
+        let url = path(deviceID)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 
     func path(_ deviceID: String) -> URL {

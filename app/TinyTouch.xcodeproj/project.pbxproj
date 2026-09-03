@@ -256,7 +256,22 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"SERIAL_FLASHER_LOG_LEVEL=0",
+					"SERIAL_FLASHER_RESET_HOLD_TIME_MS=100",
+					"SERIAL_FLASHER_BOOT_HOLD_TIME_MS=50",
+					"SERIAL_FLASHER_WRITE_BLOCK_RETRIES=3",
+					"SERIAL_FLASHER_RESET_INVERT=false",
+					"SERIAL_FLASHER_BOOT_INVERT=false",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/include",
+					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/private_include",
+				);
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -271,6 +286,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "TinyTouch/TinyTouch-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -289,7 +305,22 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"SERIAL_FLASHER_LOG_LEVEL=0",
+					"SERIAL_FLASHER_RESET_HOLD_TIME_MS=100",
+					"SERIAL_FLASHER_BOOT_HOLD_TIME_MS=50",
+					"SERIAL_FLASHER_WRITE_BLOCK_RETRIES=3",
+					"SERIAL_FLASHER_RESET_INVERT=false",
+					"SERIAL_FLASHER_BOOT_INVERT=false",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "misa198 TinyTouch";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/include",
+					"$(SRCROOT)/TinyTouch/Vendor/ESPSerialFlasher/private_include",
+				);
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -304,6 +335,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "TinyTouch/TinyTouch-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

@@ -23,6 +23,10 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn("tiny_touch_configuration_descriptor", usb)
         self.assertNotIn("tiny_touch_hid_configuration_descriptor", descriptors)
         self.assertNotIn("tiny_touch_piv_configuration_descriptor", descriptors)
+        self.assertIn('"misa198"', descriptors)
+        self.assertIn('"misa198 tinyTouch"', descriptors)
+        self.assertIn('"MISA198-TT-%02X', descriptors)
+        self.assertIn("product_id=misa198.tinytouch.v1", self.source("config_console.c"))
 
     def test_persistence_swaps_one_live_config_blob(self) -> None:
         source = self.source("device_config.c")
@@ -59,12 +63,18 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn('piv_uses_provisioned_keys() ? "ready" : "unconfigured"', console)
         self.assertIn("piv_create_identity", piv)
         self.assertIn("piv_reload_keys()", piv)
+        self.assertNotIn("char cert_9a[sizeof", piv)
 
     def test_fingerprint_auth_requires_presence(self) -> None:
         source = self.source("touch_pin_hid.c")
         self.assertIn("if (!present || !fingerprint_is_ready() || !tud_hid_ready())", source)
         self.assertNotIn("fingerprint_service_health", source)
         self.assertNotIn("usb_runtime", source)
+
+    def test_factory_reset_erases_fingerprints_and_nvs(self) -> None:
+        source = self.source("config_console.c")
+        self.assertIn("fingerprint_delete_all() && nvs_flash_erase()", source)
+        self.assertIn('strcmp(command, "RESET FACTORY")', source)
 
 
 if __name__ == "__main__":

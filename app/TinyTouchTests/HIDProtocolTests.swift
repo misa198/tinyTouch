@@ -21,8 +21,8 @@ final class HIDProtocolTests: XCTestCase {
         XCTAssertEqual(try HIDProtocol.aesCTR(key: aesKey, iv: iv, input: plaintext).hex,
                        "601ec313775789a5b7a7f504bbf3d228")
         XCTAssertEqual(try HIDProtocol.keyID(key), "630dcd2966c43366")
-        XCTAssertEqual(KeychainStore.passwordService, "tinyTouch")
-        XCTAssertEqual(KeychainStore.pairingService, "tinyTouch-pairing")
+        XCTAssertEqual(KeychainStore.passwordService, "misa198.TinyTouch.password")
+        XCTAssertEqual(KeychainStore.pairingService, "misa198.TinyTouch.pairing")
         XCTAssertEqual(DeviceIdentity.normalize("b8f862fb478c"), "B8F862FB478C")
 
         var state = ReplayState()
@@ -39,7 +39,10 @@ final class HIDProtocolTests: XCTestCase {
 
     func testRuntimeUSBMatcher() {
         XCTAssertEqual(SerialDiscovery.runtimeIdentity(vendorID: 0x303A, productID: 0x4001,
-            serial: "tt-demo", port: "/dev/cu.usbmodem1")?.id, "TT-DEMO")
+            serial: "misa198-tt-001122334455", port: "/dev/cu.usbmodem1",
+            manufacturer: "misa198", product: "misa198 tinyTouch")?.id, "MISA198-TT-001122334455")
+        XCTAssertNil(SerialDiscovery.runtimeIdentity(vendorID: 0x303A, productID: 0x4001,
+            serial: "MISA198-TT-001122334455", port: "p", manufacturer: "tinyTouch", product: "tinyTouch"))
         XCTAssertNil(SerialDiscovery.runtimeIdentity(vendorID: 0x1234, productID: 0x4001, serial: "TT-A", port: "p"))
         XCTAssertNil(SerialDiscovery.runtimeIdentity(vendorID: 0x303A, productID: 0x0009, serial: "TT-A", port: "p"))
         XCTAssertNil(SerialDiscovery.runtimeIdentity(vendorID: 0x303A, productID: 0x4001, serial: nil, port: "p"))
@@ -110,9 +113,26 @@ final class HIDProtocolTests: XCTestCase {
         XCTAssertEqual(current.enroll(slot: 4), "FINGER ENROLL 4")
         XCTAssertEqual(current.delete(slot: 4), "FINGER DELETE 4")
         XCTAssertEqual(current.clear, "FINGER CLEAR")
+        XCTAssertEqual(current.factoryReset, "RESET FACTORY")
+        XCTAssertEqual(current.setMode(.hid), "SET MODE HID")
+        XCTAssertEqual(current.setMode(.piv), "SET MODE PIV")
+        XCTAssertEqual(current.pivCreate, "PIV CREATE")
+        XCTAssertNil(DeviceDialect(protocolVersion: 5).factoryReset)
+        XCTAssertNil(DeviceDialect(protocolVersion: 5).setMode(.hid))
+        XCTAssertNil(DeviceDialect(protocolVersion: 5).pivCreate)
 
         let status = try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.3 mode=hid sensor=ready fingerprints=4 hosts=2")
         XCTAssertTrue(status.sensorReady); XCTAssertEqual(status.hidHosts, 2); XCTAssertTrue(status.isCompatible)
+        XCTAssertTrue(try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.3 mode=piv piv=unconfigured sensor=ready fingerprints=0 hosts=0").isFactoryDefault)
+        XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=5 mode=piv piv=unconfigured sensor=ready fingerprints=0 hosts=0").isFactoryDefault)
+        XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=ready sensor=ready fingerprints=0 hosts=0").isFactoryDefault)
+        XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=unconfigured sensor=ready fingerprints=1 hosts=0").isFactoryDefault)
+        XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=unconfigured sensor=ready fingerprints=0 hosts=1").isFactoryDefault)
+        XCTAssertFalse(status.isFactoryDefault)
+        XCTAssertTrue(status.isSetupComplete(mode: .hid))
+        XCTAssertTrue(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=ready sensor=ready fingerprints=4 hosts=0").isSetupComplete(mode: .piv))
+        XCTAssertTrue(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=ready sensor=ready fingerprints=1 hosts=0").isSetupComplete(mode: .piv))
+        XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=ready sensor=ready fingerprints=0 hosts=0").isSetupComplete(mode: .piv))
         XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=7 mode=hid sensor=ok").isCompatible)
         let hosts = try HIDHostList(line: "OK HOST LIST ids=AABBCCDDEEFF0011 capacity=8")
         XCTAssertEqual(hosts.ids, ["aabbccddeeff0011"])
@@ -153,10 +173,40 @@ final class HIDProtocolTests: XCTestCase {
         XCTAssertThrowsError(try KeyboardMapper.translate(Data("^".utf8), mode: .auto, outputMap: [:]))
         XCTAssertNoThrow(try KeyboardMapper.translate(Data(repeating: 65, count: 160), mode: .us))
         XCTAssertThrowsError(try KeyboardMapper.translate(Data(repeating: 65, count: 161), mode: .us))
+        XCTAssertNoThrow(try SetupValidation.password(String(repeating: "a", count: 160), confirmation: String(repeating: "a", count: 160), mode: .us))
+        XCTAssertThrowsError(try SetupValidation.password("", confirmation: "", mode: .us))
+        XCTAssertThrowsError(try SetupValidation.password("a", confirmation: "b", mode: .us))
+        XCTAssertThrowsError(try SetupValidation.password(String(repeating: "a", count: 161), confirmation: String(repeating: "a", count: 161), mode: .us))
         let store = KeyboardSettingsStore(directory: temporaryDirectory())
         XCTAssertEqual(store.load(deviceID: "tt-demo").keyboardLayout, .auto)
         try store.save(KeyboardSettings(keyboardLayout: .us), deviceID: "tt-demo")
         XCTAssertEqual(store.load(deviceID: "TT-DEMO").keyboardLayout, .us)
+    }
+
+    func testPIVPairingFailureKeepsProvisioningReady() {
+        XCTAssertNil(SCAuthResult.identities(exitCode: 0, output: "AABBCCDDEEFF00112233445566778899AABBCCDD", error: ""))
+        XCTAssertNotNil(SCAuthResult.identities(exitCode: 0, output: "No identities", error: ""))
+        XCTAssertNotNil(SCAuthResult.pairing(exitCode: 1, error: "cancelled"))
+        var state = DeviceSetupState(deviceID: "TT-A", deviceName: "tinyTouch TT-A", mode: .piv)
+        state.recordPairingFailure("cancelled")
+        XCTAssertTrue(state.provisioningComplete); XCTAssertTrue(state.canSkipPairing)
+        XCTAssertEqual(state.phase, .pair); XCTAssertEqual(state.error, "cancelled")
+    }
+
+    func testRemovingLocalDeviceFilesDoesNotAffectAnotherDevice() throws {
+        let directory = temporaryDirectory()
+        let replay = ReplayStateStore(directory: directory), settings = KeyboardSettingsStore(directory: directory)
+        try replay.save(ReplayState(seenNonces: ["aa"]), deviceID: "TT-A")
+        try replay.save(ReplayState(seenNonces: ["bb"]), deviceID: "TT-B")
+        try settings.save(KeyboardSettings(keyboardLayout: .us), deviceID: "TT-A")
+        try settings.save(KeyboardSettings(keyboardLayout: .us), deviceID: "TT-B")
+
+        try replay.remove(deviceID: "TT-A"); try settings.remove(deviceID: "TT-A")
+
+        XCTAssertEqual(replay.load(deviceID: "TT-A"), ReplayState())
+        XCTAssertEqual(settings.load(deviceID: "TT-A"), KeyboardSettings())
+        XCTAssertEqual(replay.load(deviceID: "TT-B").seenNonces, ["bb"])
+        XCTAssertEqual(settings.load(deviceID: "TT-B").keyboardLayout, .us)
     }
 
     func testFrameDecoderQuarantinesOversizeAndRecoversGluedEvents() {
@@ -277,6 +327,10 @@ final class HIDProtocolTests: XCTestCase {
                 password: Data("session-password".utf8), pairingKey: key, replayDirectory: temporaryDirectory())
             let opened = expectation(description: "opened \(kind)"); session.onOpen = { ready in XCTAssertTrue(ready); opened.fulfill() }
             session.start(); await fulfillment(of: [opened], timeout: 1)
+            let status = Task { try await session.command("STATUS") }
+            XCTAssertEqual(try pty.readLine(), "STATUS")
+            try pty.writeLine("OK STATUS product_id=misa198.tinytouch.v1 firmware=unified protocol=6 mode=hid sensor=ready fingerprints=1 hosts=1")
+            _ = try await status.value
             let nonce = String(format: "%032x", index + 20), id = try HIDProtocol.keyID(key)
             let line = kind == "EV"
                 ? "EV \(nonce) 1 1 1 \(hmac("EV|\(nonce)|1|1|1"))"
@@ -314,8 +368,8 @@ final class HIDProtocolTests: XCTestCase {
         sa.start(); sb.start(); await fulfillment(of: [opened], timeout: 1)
         let ta = Task { try await sa.command("STATUS") }, tb = Task { try await sb.command("STATUS") }
         XCTAssertEqual(try a.readLine(), "STATUS"); XCTAssertEqual(try b.readLine(), "STATUS")
-        try b.writeLine("OK STATUS firmware=B protocol=1 mode=hid sensor=ok fingerprints=2")
-        try a.writeLine("OK STATUS firmware=A protocol=1 mode=hid sensor=ok fingerprints=1")
+        try b.writeLine("OK STATUS product_id=misa198.tinytouch.v1 firmware=B protocol=1 mode=hid sensor=ok fingerprints=2")
+        try a.writeLine("OK STATUS product_id=misa198.tinytouch.v1 firmware=A protocol=1 mode=hid sensor=ok fingerprints=1")
         let linesA = try await ta.value, linesB = try await tb.value
         XCTAssertTrue(linesA.last?.contains("firmware=A") == true)
         XCTAssertTrue(linesB.last?.contains("firmware=B") == true)

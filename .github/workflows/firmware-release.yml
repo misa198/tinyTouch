@@ -75,5 +75,10 @@ jobs:
           (cd dist && sha256sum --check --strict "$bundle.sha256")
           flags=(--verify-tag --generate-notes)
           [[ "$version" = *-* ]] && flags+=(--prerelease)
+          test -f dist/release/release-manifest.json
+          test -f dist/release/tiny_touch_unified.bin
+          test -f dist/release/factory/tiny_touch_factory_full.bin
           gh release create "$RELEASE_TAG" "dist/$bundle" "dist/$bundle.sha256" \
+            "dist/release/release-manifest.json" "dist/release/tiny_touch_unified.bin" \
+            "dist/release/factory/tiny_touch_factory_full.bin" \
             --repo "$GITHUB_REPOSITORY" "${flags[@]}"

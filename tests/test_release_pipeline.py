@@ -41,6 +41,7 @@ class ReleasePipelineTests(unittest.TestCase):
         idf = b"v5.3.2"
         payload[offset + 112:offset + 112 + len(idf)] = idf
         payload[256:268] = self.commit[:12].encode()
+        payload[300:300 + len(integrity.PRODUCT_MARKER)] = integrity.PRODUCT_MARKER
         path.write_bytes(payload)
 
     def make_cli(self, path: Path) -> None:
@@ -96,6 +97,7 @@ class ReleasePipelineTests(unittest.TestCase):
             self.make_cli(path)
             cli[key] = {**metadata(path), "format": "tar.gz"}
         manifest = {
+            "product": integrity.PRODUCT_MARKER.decode(),
             "version": version,
             "build": self.commit[:12],
             "protocol": integrity.PROTOCOL,
@@ -193,6 +195,18 @@ class ReleasePipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(integrity.IntegrityError, "checksum mismatch"):
                 integrity.validate_checksums(root)
 
+    def test_app_firmware_channel_has_valid_exclusive_ranges(self):
+        channel = integrity.validate_channel(ROOT / "channels" / "app-firmware.json")
+        self.assertEqual(channel["releases"][0]["maxAppVersionExclusive"], "2.0.0")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "channel.json"
+            broken = dict(channel)
+            broken["releases"] = [dict(channel["releases"][0])]
+            broken["releases"][0]["maxAppVersionExclusive"] = "1.0.0"
+            path.write_text(json.dumps(broken))
+            with self.assertRaisesRegex(integrity.IntegrityError, "empty app compatibility range"):
+                integrity.validate_channel(path)
+
     def test_build_tag_and_release_workflow_contract(self):
         workflows = ROOT / ".github" / "workflows"
         build = (workflows / "firmware-build.yml").read_text()
@@ -211,6 +225,7 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("Decoded firmware signing secret is not a PEM private key", build)
         self.assertIn("packaging/assemble-release.py", build)
         self.assertIn("packaging/release_integrity.py firmware", build)
+        self.assertIn("packaging/release_integrity.py channel", build)
         self.assertIn('tinytouch-firmware-${version}.tar.gz', build)
         self.assertIn('sha256sum "$bundle"', build)
 
@@ -227,7 +242,7 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertNotIn('.object.sha 2>/dev/null || true', tag)
         self.assertIn("verification.verified", tag)
         self.assertIn("Tag $tag already", tag)
-        self.assertIn("main changed before", tag)
+        self.assertIn("master changed before", tag)
         self.assertIn('-f ref="refs/tags/$tag" -f sha="$commit"', tag)
         self.assertIn("actions/workflows/firmware-release.yml/dispatches", tag)
         self.assertIn("-rc\\.", tag)
@@ -241,13 +256,19 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn('git show "$commit:VERSION"', release)
         self.assertIn("sha256sum --check --strict", release)
         self.assertIn("gh release create", release)
+        self.assertIn('"dist/release/release-manifest.json"', release)
+        self.assertIn('"dist/release/tiny_touch_unified.bin"', release)
+        self.assertIn('"dist/release/factory/tiny_touch_factory_full.bin"', release)
         self.assertIn('--repo "$GITHUB_REPOSITORY"', release)
         self.assertIn("--generate-notes", release)
         self.assertNotIn("idf.py", release)
         self.assertNotIn("release-candidate", build + tag + release)
 
         self.assertFalse((workflows / "release-candidate.yml").exists())
-        self.assertNotIn("release-candidate", (ROOT / "packaging" / "tag-release").read_text())
+        tag_release = (ROOT / "packaging" / "tag-release").read_text()
+        self.assertNotIn("release-candidate", tag_release)
+        self.assertIn('--ref master', tag_release)
+        self.assertIn('${current##*.} + 1', tag_release)
         self.assertIn("exec packaging/tag-release", (ROOT / "packaging" / "release").read_text())
 
 if __name__ == "__main__":

@@ -131,6 +131,7 @@ def main() -> None:
     if len(build_id) != 12 or any(character not in "0123456789abcdef" for character in build_id):
         raise SystemExit("build ID must be the first 12 lowercase hex characters of the commit SHA")
     release = {
+        "product": "misa198.tinytouch.v1",
         "version": VERSION,
         "build": build_id,
         "protocol": PROTOCOL,

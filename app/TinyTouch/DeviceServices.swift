@@ -6,16 +6,24 @@ import IOKit.serial
 import LocalAuthentication
 import Security
 
+enum DeviceKind: String, Hashable { case runtime, rom, serialAdapter }
+
 struct DeviceIdentity: Identifiable, Hashable {
     let id: String
     let port: String
-    var name: String { "tinyTouch \(id)" }
+    let kind: DeviceKind
+    let locationID: Int?
+    var name: String { kind == .rom ? "ESP32-S3 ROM \(id)" : kind == .serialAdapter ? "Serial adapter \(id)" : "tinyTouch \(id)" }
+    init(id: String, port: String, kind: DeviceKind = .runtime, locationID: Int? = nil) {
+        self.id = id; self.port = port; self.kind = kind; self.locationID = locationID
+    }
     static func normalize(_ value: String) -> String {
         value.uppercased().filter { $0.isLetter || $0.isNumber || "_.-".contains($0) }
     }
 }
 
 struct DeviceStatus: Equatable {
+    static let productID = "misa198.tinytouch.v1"
     let fields: [String: String]
     var firmwareVersion: String { fields["firmware_version"] ?? fields["firmware"] ?? "Unknown" }
     var protocolVersion: Int { Int(fields["protocol"] ?? "1") ?? 0 }
@@ -29,6 +37,14 @@ struct DeviceStatus: Equatable {
     var sensorReady: Bool { ["ok", "ready"].contains(sensor) }
     var hidHosts: Int { Int(fields["hid_hosts"] ?? fields["hosts"] ?? "0") ?? 0 }
     var hidKeyConfigured: Bool { fields["hid_key"] == "configured" }
+    var isFactoryDefault: Bool {
+        protocolVersion == 6 && mode == "piv" && fields["piv"] == "unconfigured" &&
+            fingerprintCount == 0 && hidHosts == 0
+    }
+    func isSetupComplete(mode: SetupMode) -> Bool {
+        protocolVersion == 6 && self.mode == mode.rawValue && (fingerprintCount ?? 0) > 0 &&
+            (mode == .hid ? hidHosts > 0 : fields["piv"] == "ready")
+    }
 
     init(line: String) throws {
         guard line.hasPrefix("OK STATUS ") else { throw DeviceError.response("Unrecognized STATUS response.") }
@@ -58,6 +74,53 @@ enum DeviceDialect: Equatable {
     func enroll(slot: Int) -> String { self == .protocol6 ? "FINGER ENROLL \(slot)" : "ENROLL \(slot)" }
     func delete(slot: Int) -> String { self == .protocol6 ? "FINGER DELETE \(slot)" : "DELETE \(slot)" }
     var clear: String { self == .protocol6 ? "FINGER CLEAR" : "DELETE_ALL" }
+    var factoryReset: String? { self == .protocol6 ? "RESET FACTORY" : nil }
+    func setMode(_ mode: SetupMode) -> String? { self == .protocol6 ? "SET MODE \(mode.rawValue.uppercased())" : nil }
+    var pivCreate: String? { self == .protocol6 ? "PIV CREATE" : nil }
+}
+
+enum SetupMode: String, CaseIterable, Equatable { case hid, piv }
+
+enum DeviceSetupPhase: Int, Equatable {
+    case chooseMode, authenticate, registerMac, switchMode, createIdentity, enroll, verify, pair, complete
+}
+
+struct DeviceSetupState: Equatable {
+    let deviceID: String
+    let deviceName: String
+    var mode: SetupMode?
+    var phase: DeviceSetupPhase = .chooseMode
+    var message = "Choose how you want to use tinyTouch."
+    var error: String?
+    var provisioningComplete = false
+    var canSkipPairing = false
+
+    mutating func recordPairingFailure(_ message: String) {
+        phase = .pair; error = message; provisioningComplete = true; canSkipPairing = true
+    }
+}
+
+enum SetupValidation {
+    static func password(_ password: String, confirmation: String, mode: KeyboardMode) throws {
+        guard !password.isEmpty else { throw DeviceError.response("Password cannot be empty.") }
+        guard password == confirmation else { throw DeviceError.response("Passwords do not match.") }
+        guard password.utf8.count <= 160 else { throw DeviceError.response("Password must be 160 UTF-8 bytes or fewer.") }
+        _ = try KeyboardMapper.translate(Data(password.utf8), mode: mode)
+    }
+}
+
+enum SCAuthResult {
+    static func identities(exitCode: Int32, output: String, error: String) -> String? {
+        guard exitCode == 0 else { return error.isEmpty ? "macOS could not inspect PIV identities." : error }
+        guard output.range(of: #"\b[0-9A-Fa-f]{40}\b"#, options: .regularExpression) != nil else {
+            return "macOS has not discovered the tinyTouch PIV identity yet."
+        }
+        return nil
+    }
+
+    static func pairing(exitCode: Int32, error: String) -> String? {
+        exitCode == 0 ? nil : (error.isEmpty ? "macOS PIV pairing did not complete." : error)
+    }
 }
 
 struct HIDHostList: Equatable {
@@ -81,7 +144,7 @@ struct HIDHostList: Equatable {
 
 enum DeviceError: Error, LocalizedError {
     case disconnected, busy(String), timeout, protocolViolation(String), response(String), missingCredentials
-    case unsupportedProtocol(Int), keychain(OSStatus)
+    case unsupportedProtocol(Int), foreignFirmware, keychain(OSStatus)
     var errorDescription: String? {
         switch self {
         case .disconnected: "tinyTouch disconnected."
@@ -91,6 +154,7 @@ enum DeviceError: Error, LocalizedError {
         case .response(let message): message
         case .missingCredentials: "This Mac has no HID credentials for this device. Complete HID Setup first."
         case .unsupportedProtocol(let version): "Protocol \(version) is newer than this TinyTouch app supports. Update the app before using HID credentials."
+        case .foreignFirmware: "This board is running firmware from a different tinyTouch product. Enter ESP32-S3 ROM mode to factory-flash misa198 firmware."
         case .keychain(let status): "Keychain could not access the tinyTouch credential (OSStatus \(status)). Unlock Keychain access, then choose Retry."
         }
     }
@@ -101,7 +165,7 @@ enum DeviceError: Error, LocalizedError {
 }
 
 enum KeychainStore {
-    static let passwordService = "tinyTouch", pairingService = "tinyTouch-pairing"
+    static let passwordService = "misa198.TinyTouch.password", pairingService = "misa198.TinyTouch.pairing"
     static func result(status: OSStatus, data: CFTypeRef?) throws -> Data? {
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess else { throw DeviceError.keychain(status) }
@@ -129,6 +193,12 @@ enum KeychainStore {
             var item = base; item[kSecValueData] = data; status = SecItemAdd(item as CFDictionary, nil)
         }
         guard status == errSecSuccess else { throw DeviceError.keychain(status) }
+    }
+    static func delete(service: String, account: String) throws {
+        let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service, kSecAttrAccount: account]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw DeviceError.keychain(status) }
     }
 }
 
@@ -183,7 +253,7 @@ struct LeaseRecord: Codable, Equatable {
 
 struct LeaseObserver {
     var directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("tinyTouch", isDirectory: true)
+        .appendingPathComponent("misa198.TinyTouch", isDirectory: true)
     var leaseURL: URL { directory.appendingPathComponent("helper-suspend") }
     var acknowledgementURL: URL { directory.appendingPathComponent("helper-suspend-ack") }
 
@@ -231,7 +301,7 @@ enum CredentialMigrator {
             try KeychainStore.set(password, service: KeychainStore.passwordService, account: deviceID)
         }
         let root = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("tinyTouch", isDirectory: true)
+            .appendingPathComponent("misa198.TinyTouch", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         for kind in ["state", "settings"] {
             let destination = root.appendingPathComponent("\(kind)-\(DeviceIdentity.normalize(deviceID)).json")
@@ -249,7 +319,7 @@ enum DiagnosticsStore {
     static let maximumBytes = 2 * 1024 * 1024
     private static let lock = NSLock()
     static var directory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Logs/tinyTouch", isDirectory: true)
+        .appendingPathComponent("Logs/misa198.TinyTouch", isDirectory: true)
     static var logURL: URL { directory.appendingPathComponent("runtime.jsonl") }
 
     static func record(_ event: String, level: String = "info", deviceID: String? = nil,
@@ -297,23 +367,44 @@ enum DiagnosticsStore {
 }
 
 enum SerialDiscovery {
-    static func runtimeIdentity(vendorID: Int?, productID: Int?, serial: String?, port: String) -> DeviceIdentity? {
-        guard vendorID == 0x303A, productID == 0x4001, let serial else { return nil }
+    static let runtimeManufacturer = "misa198", runtimeProduct = "misa198 tinyTouch", runtimeSerialPrefix = "MISA198-TT-"
+    static func runtimeIdentity(vendorID: Int?, productID: Int?, serial: String?, port: String,
+                                manufacturer: String? = nil, product: String? = nil) -> DeviceIdentity? {
+        guard vendorID == 0x303A, productID == 0x4001, manufacturer == runtimeManufacturer,
+              product == runtimeProduct, let serial else { return nil }
         let id = DeviceIdentity.normalize(serial)
-        guard id.hasPrefix("TT-"), id.count > 3 else { return nil }
+        guard id.hasPrefix(runtimeSerialPrefix), id.count == runtimeSerialPrefix.count + 12,
+              id.dropFirst(runtimeSerialPrefix.count).allSatisfy({ $0.isHexDigit }) else { return nil }
         return DeviceIdentity(id: id, port: port)
     }
-    static func devices() -> [DeviceIdentity] {
+    static func identity(vendorID: Int?, productID: Int?, serial: String?, locationID: Int?,
+                         port: String, advanced: Bool, manufacturer: String? = nil, product: String? = nil) -> DeviceIdentity? {
+        if let runtime = runtimeIdentity(vendorID: vendorID, productID: productID, serial: serial, port: port,
+                                         manufacturer: manufacturer, product: product) {
+            return DeviceIdentity(id: runtime.id, port: port, locationID: locationID)
+        }
+        let location = locationID.map { String(format: "%08X", $0) } ?? DeviceIdentity.normalize(serial ?? port)
+        if vendorID == 0x303A, productID.map({ [0x1001, 0x0002].contains($0) }) == true {
+            return DeviceIdentity(id: "ROM-\(location)", port: port, kind: .rom, locationID: locationID)
+        }
+        let adapter = vendorID == 0x10C4 && productID == 0xEA60 ||
+            vendorID == 0x1A86 && productID.map({ [0x7523, 0x55D3, 0x55D4].contains($0) }) == true
+        return advanced && adapter ? DeviceIdentity(id: "USB-\(location)", port: port, kind: .serialAdapter, locationID: locationID) : nil
+    }
+    static func devices(advanced: Bool = false) -> [DeviceIdentity] {
         let matching = IOServiceMatching(kIOSerialBSDServiceValue); var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else { return [] }
         defer { IOObjectRelease(iterator) }
         var found: [DeviceIdentity] = []
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
-            guard let port = property(kIOCalloutDeviceKey, service: service), port.hasPrefix("/dev/cu.usbmodem"),
-                  let identity = runtimeIdentity(vendorID: ancestorNumber("idVendor", service: service),
+            guard let port = property(kIOCalloutDeviceKey, service: service), port.hasPrefix("/dev/cu."),
+                  let identity = identity(vendorID: ancestorNumber("idVendor", service: service),
                       productID: ancestorNumber("idProduct", service: service),
-                      serial: ancestorProperty("USB Serial Number", service: service), port: port) else { continue }
+                      serial: ancestorProperty("USB Serial Number", service: service),
+                      locationID: ancestorNumber("locationID", service: service), port: port, advanced: advanced,
+                      manufacturer: ancestorProperty("USB Vendor Name", service: service),
+                      product: ancestorProperty("USB Product Name", service: service)) else { continue }
             found.append(identity)
         }
         return found.sorted { $0.port < $1.port }
@@ -431,7 +522,7 @@ final class DeviceSession: @unchecked Sendable {
     private let suppliedPasswords: [Int: Data]?, suppliedKey: Data?
     private let heartbeatInterval: TimeInterval, heartbeatTimeout: TimeInterval
     private let keychainEnabled: Bool
-    private var lastReceived = Date(), heartbeatSentAt: Date?, protocolVersion: Int?
+    private var lastReceived = Date(), heartbeatSentAt: Date?, protocolVersion: Int?, productVerified = false
 
     init(identity: DeviceIdentity, password: Data? = nil, passwords: [Int: Data]? = nil,
          pairingKey: Data? = nil, replayDirectory: URL? = nil,
@@ -511,7 +602,10 @@ final class DeviceSession: @unchecked Sendable {
 
     private func receive(_ line: String, bytes: Int) {
         if line.hasPrefix("EV ") || line.hasPrefix("EV2 ") { handleEvent(line); return }
-        if line.hasPrefix("OK STATUS "), let status = try? DeviceStatus(line: line) { protocolVersion = status.protocolVersion }
+        if line.hasPrefix("OK STATUS "), let status = try? DeviceStatus(line: line) {
+            protocolVersion = status.protocolVersion
+            productVerified = status.fields["product_id"] == DeviceStatus.productID
+        }
         if line == "PONG" || line == "PONG 6" {
             heartbeatSentAt = nil
             if active?.command != "PING" { return }
@@ -547,6 +641,11 @@ final class DeviceSession: @unchecked Sendable {
     private func handleEvent(_ line: String, keyboardMode: KeyboardMode,
                              keyboardMap: [Character: Character]? = nil) {
         do {
+            guard productVerified else {
+                DiagnosticsStore.record("protocol.event_rejected", level: "warning", deviceID: identity.id,
+                                        fields: ["reason": "unverified_product"])
+                return
+            }
             guard protocolVersion.map({ (1...6).contains($0) }) ?? true else {
                 DiagnosticsStore.record("protocol.event_rejected", level: "warning", deviceID: identity.id,
                                         fields: ["reason": "unsupported_protocol", "protocol": String(protocolVersion!)])
@@ -637,6 +736,7 @@ final class DeviceSession: @unchecked Sendable {
     }
     private static func humanError(_ line: String) -> String {
         switch line {
+        case "ERR AUTH": "The fingerprint was not recognized or authorization timed out. Try again."
         case "ERR CONFIG_UNLOCK sensor": "The fingerprint sensor cannot authorize configuration."
         case "ERR CONFIG_UNLOCK fingerprint": "The fingerprint was not recognized before authorization expired."
         case "ERR CONFIG_LOCKED run=CONFIG_UNLOCK": "Configuration is locked; authenticate with a fingerprint and try again."
@@ -652,20 +752,22 @@ final class DeviceManager {
     var onChange: (@MainActor ([DeviceIdentity], Set<String>, Set<String>, [String: Error]) -> Void)?
     var onPrompt: (@MainActor (String, String) -> Void)?
     private var sessions: [String: DeviceSession] = [:], identities: [DeviceIdentity] = []
-    private var errors: [String: Error] = [:], opened: Set<String> = [], ready: Set<String> = [], blocked: Set<String> = []
+    private var errors: [String: Error] = [:], opened: Set<String> = [], ready: Set<String> = [], blocked: Set<String> = [], exclusive: Set<String> = []
     var retryDeadlines: [String: Date] = [:]
     private let discover: @MainActor () -> [DeviceIdentity]
+    private let defaultDiscovery: Bool
     private let backoff: BackoffPolicy, random: () -> Double, leaseObserver: LeaseObserver
     private let heartbeatInterval: TimeInterval, heartbeatTimeout: TimeInterval
     private let sessionUsesKeychain: Bool
     private var failures: [String: Int] = [:], activeLeaseNonce: String?
-    private var enabled = true, timer: Timer?, wakeObserver: NSObjectProtocol?
+    private var enabled = true, advancedDiscovery = false, timer: Timer?, wakeObserver: NSObjectProtocol?
 
-    init(discover: @escaping @MainActor () -> [DeviceIdentity] = SerialDiscovery.devices,
+    init(discover: (@MainActor () -> [DeviceIdentity])? = nil,
          backoff: BackoffPolicy = BackoffPolicy(), random: @escaping () -> Double = { Double.random(in: 0...1) },
          leaseObserver: LeaseObserver = LeaseObserver(), heartbeatInterval: TimeInterval = 5,
          heartbeatTimeout: TimeInterval = 2, sessionUsesKeychain: Bool = true) {
-        self.discover = discover; self.backoff = backoff; self.random = random; self.leaseObserver = leaseObserver
+        self.discover = discover ?? { SerialDiscovery.devices() }; defaultDiscovery = discover == nil
+        self.backoff = backoff; self.random = random; self.leaseObserver = leaseObserver
         self.heartbeatInterval = heartbeatInterval; self.heartbeatTimeout = heartbeatTimeout
         self.sessionUsesKeychain = sessionUsesKeychain
     }
@@ -683,6 +785,7 @@ final class DeviceManager {
         if !enabled { sessions.values.forEach { $0.stop() }; sessions.removeAll(); opened.removeAll(); ready.removeAll() }
         scan()
     }
+    func setAdvancedDiscovery(_ enabled: Bool) { advancedDiscovery = enabled; scan() }
     func retry(_ deviceID: String) {
         blocked.remove(deviceID); failures[deviceID] = nil; retryDeadlines[deviceID] = nil; errors[deviceID] = nil; scan()
     }
@@ -691,6 +794,12 @@ final class DeviceManager {
         return try await session.command(command, timeout: timeout)
     }
     func markReady(_ id: String) { failures[id] = nil; retryDeadlines[id] = nil; ready.insert(id); publish() }
+    func acquireExclusive(_ id: String) -> DeviceIdentity? {
+        guard let identity = identities.first(where: { $0.id == id }) else { return nil }
+        exclusive.insert(id); sessions[id]?.stopSynchronously(); sessions[id] = nil
+        opened.remove(id); ready.remove(id); publish(); return identity
+    }
+    func releaseExclusive(_ id: String) { exclusive.remove(id); scan() }
 
     private func observeWake() {
         guard wakeObserver == nil else { return }
@@ -704,6 +813,13 @@ final class DeviceManager {
     func reconnectAfterWake() {
         sessions.values.forEach { $0.stop() }
         sessions.removeAll(); opened.removeAll(); ready.removeAll(); retryDeadlines.removeAll(); failures.removeAll()
+        scan()
+    }
+
+    func reconnect(_ deviceID: String) {
+        sessions[deviceID]?.stopSynchronously(); sessions[deviceID] = nil
+        opened.remove(deviceID); ready.remove(deviceID); errors[deviceID] = nil
+        blocked.remove(deviceID); failures[deviceID] = nil; retryDeadlines[deviceID] = nil
         scan()
     }
 
@@ -724,7 +840,8 @@ final class DeviceManager {
             activeLeaseNonce = nil; DiagnosticsStore.record("manager.resumed")
         }
         let previousPorts = Dictionary(uniqueKeysWithValues: identities.map { ($0.id, $0.port) })
-        identities = discover(); let current = Set(identities.map(\.id))
+        identities = defaultDiscovery ? SerialDiscovery.devices(advanced: advancedDiscovery) : discover()
+        let current = Set(identities.map(\.id))
         for id in previousPorts.keys where !current.contains(id) {
             sessions[id]?.stop(); sessions[id] = nil; opened.remove(id); ready.remove(id); errors[id] = nil
             blocked.remove(id); failures[id] = nil; retryDeadlines[id] = nil
@@ -737,7 +854,8 @@ final class DeviceManager {
             }
         }
         if enabled {
-            for identity in identities where sessions[identity.id] == nil && !blocked.contains(identity.id)
+            for identity in identities where identity.kind == .runtime && sessions[identity.id] == nil && !blocked.contains(identity.id)
+                && !exclusive.contains(identity.id)
                 && Self.canReconnect(deadline: retryDeadlines[identity.id]) {
                 retryDeadlines[identity.id] = nil
                 let session = DeviceSession(identity: identity, heartbeatInterval: heartbeatInterval,

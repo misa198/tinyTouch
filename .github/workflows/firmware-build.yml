@@ -80,6 +80,7 @@ jobs:
             --firmware-build firmware/tiny_touch_unified/build \
             --build-id "${commit:0:12}"
           python packaging/release_integrity.py firmware dist/release --commit "$commit"
+          python packaging/release_integrity.py channel channels/app-firmware.json
       - name: Package firmware
         id: package
         run: |
@@ -95,4 +96,7 @@ jobs:
           path: |
             dist/${{ steps.package.outputs.bundle }}
             dist/${{ steps.package.outputs.bundle }}.sha256
+            dist/release/release-manifest.json
+            dist/release/tiny_touch_unified.bin
+            dist/release/factory/tiny_touch_factory_full.bin
           if-no-files-found: error

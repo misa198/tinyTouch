@@ -3,8 +3,9 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var app: AppState
     @State private var section = Section.overview
+    @State private var showMainUI = false
     enum Section: String, CaseIterable, Identifiable {
-        case overview = "Overview", setup = "HID Setup", fingerprints = "Fingerprints", computers = "Computers", settings = "Settings"
+        case overview = "Overview", setup = "HID Setup", fingerprints = "Fingerprints", computers = "Computers", firmware = "Firmware", settings = "Settings"
         var id: Self { self }
         var icon: String {
             switch self {
@@ -12,6 +13,7 @@ struct ContentView: View {
             case .setup: "keyboard"
             case .fingerprints: "touchid"
             case .computers: "desktopcomputer"
+            case .firmware: "arrow.down.circle"
             case .settings: "gear"
             }
         }
@@ -19,7 +21,10 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             LiquidBackdrop()
-            if !app.onboardingComplete { OnboardingView() } else {
+            if let setup = app.setup { SetupWizardView(setup: setup) }
+            else if !app.onboardingComplete && !showMainUI {
+                OnboardingView { section = .firmware; showMainUI = true }
+            } else {
                 NavigationSplitView {
                     List(Section.allCases, selection: $section) {
                         Label($0.rawValue, systemImage: $0.icon)
@@ -47,7 +52,17 @@ struct ContentView: View {
                         .ignoresSafeArea(edges: .top)
                 }
             }
-        }.frame(minWidth: 720, minHeight: 480)
+            if let prompt = app.fingerprintPrompt { FingerprintPromptView(message: prompt.message) }
+        }.frame(minWidth: 720, minHeight: 600)
+            .animation(.easeInOut(duration: 0.15), value: app.fingerprintPrompt)
+            .onAppear { openFirmwareForROM() }
+            .onChange(of: app.devices.contains(where: { $0.identity.kind == .rom })) { _ in
+                openFirmwareForROM()
+            }
+    }
+    private func openFirmwareForROM() {
+        guard app.devices.contains(where: { $0.identity.kind == .rom }) else { return }
+        showMainUI = true; section = .firmware
     }
     @ViewBuilder private var detail: some View {
         switch section {
@@ -55,8 +70,212 @@ struct ContentView: View {
         case .setup: HIDSetupView()
         case .fingerprints: FingerprintsView()
         case .computers: ComputersView { section = .setup }
+        case .firmware: FirmwareView()
         case .settings: SettingsView()
         }
+    }
+}
+
+private struct FirmwareView: View {
+    @EnvironmentObject private var app: AppState
+    @State private var confirming = false
+
+    var body: some View {
+        Page(title: "Firmware", icon: "arrow.down.circle") {
+            Toggle("Show CP210x/CH340 serial adapters (Advanced)", isOn: Binding(
+                get: { app.advancedFirmwareDevices }, set: { app.setAdvancedFirmwareDevices($0) }
+            )).disabled(app.isFirmwareWriting)
+            if let device = app.selectedDevice {
+                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
+                    GridRow { Text("Target").foregroundStyle(.secondary); Text(device.name) }
+                    GridRow { Text("Current").foregroundStyle(.secondary); Text(app.firmware.current) }
+                    GridRow { Text("Latest").foregroundStyle(.secondary); Text(app.firmware.latest) }
+                    GridRow { Text("Strategy").foregroundStyle(.secondary); Text(app.firmware.strategy?.rawValue ?? "Not checked") }
+                }
+                Text(app.firmware.message).foregroundStyle(.secondary)
+                if [.downloading, .writing].contains(app.firmware.phase) {
+                    ProgressView(value: app.firmware.progress).frame(maxWidth: 420)
+                }
+                if let error = app.firmware.error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
+                }
+                HStack {
+                    if app.firmware.phase == .ready {
+                        Button(app.firmware.strategy == .ota ? "Install Update…" : "Factory Flash…") { confirming = true }
+                            .buttonStyle(.borderedProminent).disabled(app.busy)
+                    } else if app.firmware.needsManualBoot {
+                        Button("Retry After BOOT + RESET") { app.retryManualFactoryFlash() }
+                            .buttonStyle(.borderedProminent).disabled(app.busy)
+                    } else if ![.downloading, .writing, .reconnect].contains(app.firmware.phase) {
+                        Button(app.firmware.phase == .failed ? "Retry" : "Check for Updates") { app.checkFirmware() }
+                            .buttonStyle(.borderedProminent).disabled(app.busy)
+                    }
+                }
+            } else {
+                RequirementPlaceholder(icon: "cable.connector", title: "Connect tinyTouch or an ESP32-S3 in ROM mode",
+                    description: "Runtime and native Espressif USB ports appear automatically. Enable Advanced only for a confirmed tinyTouch on CP210x/CH340.")
+            }
+        }
+        .alert(app.firmware.strategy == .ota ? "Install firmware update?" : "Factory flash selected device?", isPresented: $confirming) {
+            Button("Cancel", role: .cancel) {}
+            Button(app.firmware.strategy == .ota ? "Download and Install" : "Download and Factory Flash",
+                   role: app.firmware.strategy == .factory ? .destructive : nil) { app.installFirmware() }
+        } message: {
+            Text(app.firmware.strategy == .ota
+                ? "The verified image will be downloaded and written to the inactive OTA slot. Device data is preserved."
+                : "The verified merged image will be written at 0x0. Fingerprints, keys, hosts, and settings will be reset. Confirm this serial adapter is connected to tinyTouch.")
+        }
+    }
+}
+
+private struct SetupWizardView: View {
+    @EnvironmentObject private var app: AppState
+    let setup: DeviceSetupState
+    @State private var mode: SetupMode?
+    @State private var password = ""
+    @State private var confirmation = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 28) {
+                Image("TinyTouchIcon")
+                    .resizable().scaledToFit().frame(width: 72, height: 72)
+                    .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+                VStack(spacing: 6) {
+                    Text(title).font(.largeTitle.bold())
+                    Text(setup.deviceName).font(.headline)
+                    Text(mode == .hid && setup.phase == .chooseMode ? "Enter the password tinyTouch should type after authentication." : setup.message)
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                if setup.phase == .chooseMode { modePicker }
+                else if setup.phase == .complete { completion }
+                else { progress }
+            }
+            .padding(48).frame(maxWidth: 680).frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.25), value: mode)
+        }
+    }
+
+    private var title: String {
+        setup.phase == .complete ? "Setup Complete" :
+            setup.phase == .chooseMode ? (mode == .hid ? "Set Up HID" : "Set Up tinyTouch") : "Setting Up tinyTouch"
+    }
+
+    @ViewBuilder private var modePicker: some View {
+        if mode == .hid {
+            passwordForm.transition(.move(edge: .trailing).combined(with: .opacity))
+        } else {
+            modeSelection.transition(.move(edge: .leading).combined(with: .opacity))
+        }
+    }
+
+    private var modeSelection: some View {
+        VStack(spacing: 18) {
+            HStack(spacing: 16) {
+                modeCard(.hid, icon: "keyboard", title: "HID", detail: "Type your password after a fingerprint match.")
+                modeCard(.piv, icon: "person.text.rectangle", title: "PIV", detail: "Use tinyTouch as a macOS smart card.")
+            }
+            if let error = setup.error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
+            Button("Continue") {
+                guard let mode else { return }
+                app.startSetup(mode: mode, password: password, confirmation: confirmation)
+            }
+            .buttonStyle(.borderedProminent).disabled(mode == nil || app.busy)
+        }
+    }
+
+    private var passwordForm: some View {
+        VStack(spacing: 18) {
+            SecureField("Mac account password", text: $password).frame(maxWidth: 380)
+            SecureField("Confirm password", text: $confirmation).frame(maxWidth: 380)
+            if !confirmation.isEmpty && password != confirmation {
+                Label("Passwords do not match.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+            }
+            Text("Maximum 160 UTF-8 bytes. Your current keyboard mapping must support every character.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error = setup.error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
+            HStack {
+                Button("Back") { mode = nil; password = ""; confirmation = "" }
+                Button("Continue") { app.startSetup(mode: .hid, password: password, confirmation: confirmation) }
+                    .buttonStyle(.borderedProminent).disabled(password.isEmpty || password != confirmation || app.busy)
+            }
+        }
+    }
+
+    private func modeCard(_ value: SetupMode, icon: String, title: String, detail: String) -> some View {
+        Button { mode = value } label: {
+            VStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 34))
+                Text(title).font(.title2.bold())
+                Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .padding(20).frame(maxWidth: .infinity, minHeight: 150)
+            .background(mode == value ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(mode == value ? Color.accentColor : .clear, lineWidth: 2))
+        }.buttonStyle(.plain).accessibilityLabel("\(title): \(detail)")
+    }
+
+    private var progress: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(steps.enumerated()), id: \.element.0) { index, step in
+                let current = steps.firstIndex(where: { $0.0 == setup.phase }) ?? 0
+                Label(step.1, systemImage: setup.phase == .complete || index < current ? "checkmark.circle.fill" :
+                      index == current && setup.error != nil ? "exclamationmark.circle.fill" :
+                      index == current ? "circle.inset.filled" : "circle")
+                    .foregroundStyle(index <= current ? Color.primary : Color.secondary)
+            }
+            if let error = setup.error {
+                Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).padding(.top, 8)
+                HStack {
+                    Button("Retry") { app.retrySetup() }.buttonStyle(.borderedProminent).disabled(app.busy)
+                    Button("Start Over") {
+                        mode = nil; password = ""; confirmation = ""; app.startOverSetup()
+                    }.disabled(app.busy)
+                    if setup.canSkipPairing { Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
+                }
+            } else { ProgressView().padding(.top, 8) }
+        }.frame(maxWidth: 480, alignment: .leading)
+    }
+
+    private var steps: [(DeviceSetupPhase, String)] {
+        var values: [(DeviceSetupPhase, String)] = [(.authenticate, "Authorize setup")]
+        if setup.mode == .hid { values += [(.registerMac, "Register this Mac"), (.switchMode, "Enable HID mode")] }
+        else { values += [(.createIdentity, "Create PIV identity")] }
+        values += [(.enroll, "Enroll fingerprint"), (.verify, "Verify setup")]
+        if setup.mode == .piv { values += [(.pair, "Pair with macOS")] }
+        return values
+    }
+
+    private var completion: some View {
+        VStack(spacing: 18) {
+            Label("\(setup.mode?.rawValue.uppercased() ?? "tinyTouch") configured", systemImage: "checkmark.seal.fill")
+                .font(.title2.bold()).foregroundStyle(.green)
+            Text("Your fingerprint is enrolled. You can add more later.").foregroundStyle(.secondary)
+            Button("Done") { app.finishSetup() }.buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+private struct FingerprintPromptView: View {
+    let message: String
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.3).ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "touchid").font(.system(size: 42)).foregroundStyle(.tint)
+                Text("Fingerprint Required").font(.title2.bold())
+                Text(message).foregroundStyle(.secondary)
+                ProgressView()
+            }
+            .padding(28).frame(minWidth: 320)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(radius: 24)
+        }
+        .transition(.opacity)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isModal)
     }
 }
 
@@ -67,7 +286,7 @@ private struct DevicePicker: View {
             if app.devices.count > 1 {
                 Picker("Device", selection: $app.selectedID) {
                     ForEach(app.devices) { Text($0.name).tag(Optional($0.id)) }
-                }.frame(maxWidth: 360)
+                }.frame(maxWidth: 360).disabled(app.busy)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(app.selectedDevice?.name ?? "No tinyTouch connected").font(.headline)
@@ -204,7 +423,7 @@ private struct OverviewView: View {
                     row("HID computers", String(status.hidHosts))
                 }
                 if status.mode == "piv" {
-                    Label("PIV mode is active. This release reports PIV status only; provisioning is deferred.", systemImage: "info.circle")
+                    Label(status.fields["piv"] == "ready" ? "PIV identity is ready." : "PIV identity is not configured.", systemImage: "info.circle")
                         .foregroundStyle(.secondary)
                 }
                 DeviceMessageView()
@@ -373,6 +592,7 @@ private struct ComputersView: View {
 
 private struct SettingsView: View {
     @EnvironmentObject private var app: AppState
+    @State private var confirmingFactoryReset = false
     var body: some View {
         Page(title: "Settings", icon: "gear") {
             Toggle("Enable HID background service", isOn: Binding(get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }))
@@ -386,13 +606,33 @@ private struct SettingsView: View {
             }
             Text("Passwords and pairing keys are stored only in your macOS Keychain. Replay state remains in ~/Library/Application Support/tinyTouch.").foregroundStyle(.secondary)
             Button("Export Diagnostics…") { app.exportDiagnostics() }
+            Divider()
+            Text("Factory Reset").font(.headline)
+            Text("Erase fingerprints, PIV keys, trusted computers, device settings, and this Mac's credentials for the selected tinyTouch.")
+                .foregroundStyle(.secondary)
+            Button("Factory Reset", role: .destructive) { confirmingFactoryReset = true }
+                .disabled(app.busy || !app.backgroundEnabled || app.selectedDevice?.connection == .error ||
+                          app.selectedDevice?.status?.protocolVersion != 6 ||
+                          app.selectedDevice?.status?.sensorReady != true)
+            if let status = app.selectedDevice?.status, status.protocolVersion != 6 {
+                Text("Update this device to protocol 6 firmware to use Factory Reset.").foregroundStyle(.secondary)
+            } else if app.selectedDevice?.status?.sensorReady == false {
+                Text("The fingerprint sensor must be available so its templates can be erased.").foregroundStyle(.secondary)
+            }
             AppMessageView()
+        }
+        .alert("Factory reset selected tinyTouch?", isPresented: $confirmingFactoryReset) {
+            Button("Cancel", role: .cancel) {}
+            Button("Factory Reset", role: .destructive) { app.factoryReset() }
+        } message: {
+            Text("This permanently erases every fingerprint, PIV key, trusted computer, and device setting. TinyTouch will return to its unconfigured PIV state. Matching credentials and settings on this Mac will also be deleted.")
         }
     }
 }
 
 private struct OnboardingView: View {
     @EnvironmentObject private var app: AppState
+    let flashBlankBoard: () -> Void
     @State private var launchAtLogin = true
     @State private var replaceLegacy = true
     var body: some View {
@@ -411,6 +651,9 @@ private struct OnboardingView: View {
             }
             Button("Continue") { app.completeOnboarding(launchAtLogin: launchAtLogin, replaceLegacy: replaceLegacy) }
                 .buttonStyle(.borderedProminent)
+            Button("Flash a Blank Board") { flashBlankBoard() }
+            Text("Use this when tinyTouch has no working firmware. The app will open Firmware and detect an ESP32-S3 in ROM/download mode.")
+                .font(.caption).foregroundStyle(.secondary)
             AppMessageView()
         }.padding(48).frame(maxWidth: 620, alignment: .leading)
     }
