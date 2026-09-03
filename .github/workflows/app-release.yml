@@ -42,6 +42,7 @@ jobs:
           [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit" --jq .commit.verification.verified)" = true ]]
           git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$commit" ]]
+          [[ "$(git show "$commit:app/TinyTouch.xcodeproj/project.pbxproj" | sed -n 's/^[[:space:]]*MARKETING_VERSION = \([^;]*\);/\1/p' | sort -u)" = "${RELEASE_TAG#app-v}" ]]
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#app-v}" >> "$GITHUB_OUTPUT"

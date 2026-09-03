@@ -164,11 +164,11 @@ final class AppState: ObservableObject {
             do {
                 let channelData = try await Self.download(FirmwareSupport.channelURL)
                 let release = try FirmwareChannel.decode(channelData,
-                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
                 let manifestData = try await Self.download(release.manifest)
                 let update = try FirmwareSupport.update(channelData: channelData, manifestData: manifestData,
                     manifestURL: release.manifest,
-                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
                     identity: device.identity, status: device.status)
                 firmwareUpdate = update
                 firmware.phase = .ready; firmware.latest = update.version.description
@@ -223,11 +223,11 @@ final class AppState: ObservableObject {
             do {
                 let channelData = try await Self.download(FirmwareSupport.channelURL)
                 let release = try FirmwareChannel.decode(channelData,
-                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
                 let manifestData = try await Self.download(release.manifest)
                 let update = try FirmwareSupport.update(channelData: channelData, manifestData: manifestData,
                     manifestURL: release.manifest,
-                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
                     identity: device.identity, status: nil)
                 firmwareUpdate = update; firmware.latest = update.version.description; firmware.strategy = update.strategy
                 firmware.phase = .downloading; firmware.message = "Downloading and verifying firmware…"

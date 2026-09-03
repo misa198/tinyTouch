@@ -38,11 +38,57 @@ jobs:
           repository="$GITHUB_REPOSITORY"
           tag="app-v$VERSION"
           head="$(gh api "repos/$repository/git/ref/heads/master" --jq .object.sha)"
-          [[ "$(gh api "repos/$repository/commits/$head" --jq .commit.verification.verified)" = true ]] || {
+          project_path=app/TinyTouch.xcodeproj/project.pbxproj
+          project="$(gh api "repos/$repository/contents/$project_path?ref=$head" --jq .content | base64 --decode)"
+          versions="$(sed -n 's/^[[:space:]]*MARKETING_VERSION = \([^;]*\);/\1/p' <<<"$project" | sort -u)"
+          [[ "$versions" != *$'\n'* && -n "$versions" ]] || {
+            echo "Xcode configurations must share one MARKETING_VERSION." >&2
+            exit 1
+          }
+          tag_sha=""
+          if tag_ref="$(gh api "repos/$repository/git/ref/tags/$tag" 2>/dev/null)"; then
+            tag_sha="$(jq -r .object.sha <<<"$tag_ref")"
+          fi
+          head_verified="$(gh api "repos/$repository/commits/$head" --jq .commit.verification.verified)"
+
+          update_version=false
+          [[ "$versions" != "$VERSION" ]] && update_version=true
+          create_commit="$update_version"
+          [[ -z "$tag_sha" && "$head_verified" != true ]] && create_commit=true
+          if [[ "$create_commit" = true ]]; then
+            [[ -z "$tag_sha" ]] || {
+              echo "Tag $tag already exists but the app version is $versions." >&2
+              exit 1
+            }
+            query='mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }'
+            release_source="$(printf '{"version":"%s","source":"%s"}\n' "$VERSION" "$head" | base64 -w0)"
+            project="$(sed -E "s/^([[:space:]]*MARKETING_VERSION = )[^;]+;/\\1$VERSION;/" <<<"$project" | base64 -w0)"
+            jq -n --arg query "$query" --arg repository "$repository" \
+              --arg headline "Release TinyTouch app $VERSION" --arg project "$project" \
+              --arg release_source "$release_source" --arg head "$head" --arg project_path "$project_path" \
+              --argjson update_version "$update_version" \
+              '{query: $query, variables: {input: {branch: {repositoryNameWithOwner: $repository, branchName: "master"}, message: {headline: $headline}, expectedHeadOid: $head, fileChanges: {additions: ([{path: ".github/app-release-source.json", contents: $release_source}] + if $update_version then [{path: $project_path, contents: $project}] else [] end)}}}}' \
+              > request.json
+            head="$(gh api graphql --input request.json --jq .data.createCommitOnBranch.commit.oid)"
+            [[ "$head" =~ ^[0-9a-f]{40}$ ]]
+          fi
+
+          verified=false
+          for _ in {1..10}; do
+            verified="$(gh api "repos/$repository/commits/$head" --jq .commit.verification.verified)"
+            [[ "$verified" = true ]] && break
+            sleep 2
+          done
+          [[ "$verified" = true ]] || {
             echo "Release commit $head is not verified." >&2
             exit 1
           }
-          if tag_sha="$(gh api "repos/$repository/git/ref/tags/$tag" --jq .object.sha 2>/dev/null)"; then
+          [[ "$(gh api "repos/$repository/git/ref/heads/master" --jq .object.sha)" = "$head" ]] || {
+            echo "master changed before the app release tag was created." >&2
+            exit 1
+          }
+
+          if [[ -n "$tag_sha" ]]; then
             [[ "$tag_sha" = "$head" ]] || {
               echo "Tag $tag already points to another commit." >&2
               exit 1

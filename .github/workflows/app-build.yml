@@ -43,16 +43,18 @@ jobs:
         env:
           APP_VERSION: ${{ inputs.version }}
         run: |
-          settings=(CODE_SIGNING_ALLOWED=NO)
-          [[ -z "$APP_VERSION" ]] || settings+=(MARKETING_VERSION="$APP_VERSION")
           xcodebuild -project TinyTouch.xcodeproj -scheme TinyTouch \
             -configuration Release -derivedDataPath "$RUNNER_TEMP/TinyTouchDerived" \
-            "${settings[@]}" build
+            CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/TinyTouchDerived/Build/Products/Release/TinyTouch.app"
+          built_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          [[ -z "$APP_VERSION" || "$built_version" = "$APP_VERSION" ]] || {
+            echo "Built app version $built_version does not match release version $APP_VERSION." >&2
+            exit 1
+          }
           mkdir -p dist
           bundle=TinyTouch-macOS.zip
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/TinyTouchDerived/Build/Products/Release/TinyTouch.app" \
-            "dist/$bundle"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$bundle"
           (cd dist && shasum -a 256 "$bundle" > "$bundle.sha256")
           echo "artifact-name=tinytouch-app-${APP_VERSION:-ci}" >> "$GITHUB_OUTPUT"
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"

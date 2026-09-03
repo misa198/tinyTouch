@@ -79,6 +79,7 @@ struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var pendingMode: SetupMode?
     @State private var confirmingFactoryReset = false
+    private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown" }
     var body: some View { Page(title: "Settings", icon: "gear") {
         if app.selectedMode != .piv {
             Toggle("Enable HID background service", isOn: Binding(get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }))
@@ -110,7 +111,8 @@ struct SettingsView: View {
         Text("Erase fingerprints, PIV keys, trusted computers, device settings, and this Mac's credentials for the selected tinyTouch.").foregroundStyle(.secondary)
         Button("Factory Reset", role: .destructive) { confirmingFactoryReset = true }.disabled(app.busy || !app.backgroundEnabled || app.selectedDevice?.connection == .error || app.selectedDevice?.status?.protocolVersion != 6 || app.selectedDevice?.status?.sensorReady != true)
         if let status = app.selectedDevice?.status, status.protocolVersion != 6 { Text("Update this device to protocol 6 firmware to use Factory Reset.").foregroundStyle(.secondary) } else if app.selectedDevice?.status?.sensorReady == false { Text("The fingerprint sensor must be available so its templates can be erased.").foregroundStyle(.secondary) }
-        AppMessageView()
+        AppMessageView(); Divider(); Text("About").font(.headline)
+        LabeledContent("Version", value: version).textSelection(.enabled)
     }.confirmationDialog("Switch tinyTouch mode?", isPresented: Binding(get: { pendingMode != nil }, set: { if !$0 { pendingMode = nil } }), titleVisibility: .visible) {
         Button("Cancel", role: .cancel) { pendingMode = nil }
         if let mode = pendingMode { Button("Switch to \(mode.rawValue.uppercased())") { pendingMode = nil; app.changeMode(to: mode) } }

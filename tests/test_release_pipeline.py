@@ -286,11 +286,17 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("actions/upload-artifact@", build)
         self.assertEqual(tag.count("workflow_dispatch:"), 1)
         self.assertIn('tag="app-v$VERSION"', tag)
+        self.assertIn("MARKETING_VERSION", tag)
+        self.assertIn("CreateCommitOnBranchInput", tag)
         self.assertIn("actions/workflows/app-release.yml/dispatches", tag)
         self.assertIn('tags: ["app-v*"]', release)
         self.assertIn("uses: ./.github/workflows/app-build.yml", release)
         self.assertIn("actions/download-artifact@", release)
         self.assertIn("gh release create", release)
+        self.assertIn("verification.verified", tag)
+        self.assertIn("CFBundleShortVersionString", build)
+        settings = (ROOT / "app" / "TinyTouch" / "DeviceManagementViews.swift").read_text()
+        self.assertIn('LabeledContent("Version", value: version)', settings)
 
 if __name__ == "__main__":
     unittest.main()

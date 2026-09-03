@@ -1,5 +1,6 @@
 ## interested in preassembled versions? pre order now:
-[tinytouch.dev](https://tinytouch.dev)
+
+[![Download TinyTouch for macOS](https://img.shields.io/badge/download-TinyTouch_for_macOS-007AFF?logo=apple&logoColor=white)](https://github.com/misa198/tinyTouch/releases)
 
 <img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
 
@@ -26,11 +27,10 @@ if you would like to support this project, please consider [donating](https://gi
 
 - [red pill or blue pill?](#red-pill-or-blue-pill)
 - [install](#install)
-  - [red pill](#red-pill)
-  - [blue pill](#blue-pill)
+  - [install the mac app](#install-the-mac-app)
+  - [set up tinytouch](#set-up-tinytouch)
 - [hardware](#hardware)
 - [wiring](#wiring)
-- [notes](#notes)
 
 ## red pill or blue pill?
 
@@ -105,17 +105,17 @@ convenience of having it work everywhere.
 
 in hid mode, the esp acts like a usb keyboard.
 
-the mac helper keeps your real password encrypted and stored on your mac. this
-way, an attacker cannot extract your password from the esp alone. the esp keeps a
-shared pairing key. after a fingerprint match, the esp sends a signed request to
-the helper, the helper checks it, encrypts the password for that one request, and
-sends it back. the esp decrypts it in ram, types it, then wipes it.
+the native mac app keeps your real password and pairing key in your login
+keychain. this way, an attacker cannot extract your password from the esp alone.
+after a fingerprint match, the esp sends a signed request to the app, the app
+checks it, encrypts the password for that one request, and sends it back. the esp
+decrypts it in ram, types it, then wipes it.
 
 this is why it works almost everywhere. it is also why it is scary: the final
 step is still your real password being typed into whatever has focus.
 
 to make it less bad, the esp never stores the password. requests use a nonce and
-mac so old requests cannot just be replayed, and the helper only sends back an
+mac so old requests cannot just be replayed, and the app only sends back an
 encrypted one-time response. the password only exists on the esp briefly in ram.
 
 ### piv mode
@@ -136,89 +136,36 @@ cards, like login and `sudo` with pam.
 
 ## install
 
-### red pill
-use this if you just want the thing to type your password.
+the native app requires macos 13 or later. it handles firmware installation,
+fingerprint enrollment, HID credentials, PIV identities, and macos pairing.
 
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r software/macos-helper/requirements.txt
+### install the mac app
 
-pairing_key="$(openssl rand -hex 32)"
-.venv/bin/python software/macos-helper/tinytouch_helper.py --set-pairing-key "$pairing_key"
-.venv/bin/python software/macos-helper/tinytouch_helper.py --set-password 'your-password-here'
+1. download `TinyTouch-macOS.zip` from the latest
+   [`app-v*` release](https://github.com/misa198/tinyTouch/releases).
+2. unzip it and move `TinyTouch.app` to `/Applications`.
+3. control-click the app and choose **Open** the first time.
+4. leave **Launch TinyTouch at login** enabled. HID mode needs the app running
+   in the menu bar.
 
-cp firmware/tiny_touch_keyboard/secrets.example.h firmware/tiny_touch_keyboard/secrets.h
-```
+### set up tinytouch
 
-edit `firmware/tiny_touch_keyboard/secrets.h` so it contains the same pairing
-key bytes, then flash `firmware/tiny_touch_keyboard/tiny_touch_keyboard.ino`
-with arduino ide.
+connect tinytouch and open the app from the menu bar. a factory-default device
+starts the setup wizard automatically:
 
-board settings used here:
+- choose **HID** to store your mac password in the login keychain and type it
+  after a fingerprint match.
+- choose **PIV** to create the smart-card identity. reconnect the device when
+  prompted, then touch the sensor at the macos pin prompt; tinytouch enters its
+  dummy pin automatically.
 
-```text
-usb cdc on boot: enabled
-usb mode: usb-otg
-```
+the wizard enrolls the first fingerprint and performs the remaining device and
+macos setup. use **Fingerprints**, **Computers**, **Firmware**, and **Settings**
+in the app for later changes.
 
-run the helper:
-
-```sh
-.venv/bin/python software/macos-helper/tinytouch_helper.py
-```
-
-for launchd, edit paths in
-`software/macos-helper/launchd/com.tinytouch.helper.plist`, then copy it to
-`~/Library/LaunchAgents/`.
-
-### blue pill
-
-use this if you want the current better path. it exposes piv over ccid, plus hid
-only for the dummy pin `000000`.
-
-`main/secrets.h` needs the piv certs and private keys for slots `9a` and `9d`.
-
-generate test keys:
-
-```sh
-cd firmware/tiny_touch_smartcard
-openssl req -newkey rsa:2048 -nodes -keyout piv_key_9a.pem -x509 -days 3650 -out piv_cert_9a.pem -subj "/CN=tinytouch piv auth/"
-openssl req -newkey rsa:2048 -nodes -keyout piv_key_9d.pem -x509 -days 3650 -out piv_cert_9d.pem -subj "/CN=tinytouch piv key management/"
-cp main/secrets.example.h main/secrets.h
-```
-
-then paste:
-
-- `piv_cert_9a.pem` into `PIV_CERT_9A_PEM`
-- `piv_key_9a.pem` into `PIV_PRIVATE_KEY_9A_PEM`
-- `piv_cert_9d.pem` into `PIV_CERT_9D_PEM`
-- `piv_key_9d.pem` into `PIV_PRIVATE_KEY_9D_PEM`
-
-build and flash:
-
-```sh
-idf.py set-target esp32s3
-idf.py build
-idf.py -p /dev/cu.usbmodem101 flash
-```
-
-after flashing:
-
-```sh
-system_profiler SPSmartCardsDataType
-sc_auth identities
-sudo sc_auth pair -u "$USER" -h <auth-cert-hash>
-```
-
-to test sudo:
-
-```sh
-sudo -k
-sudo -v
-```
-
-when macos asks for the pin, touch the sensor.
+for a blank ESP32-S3, put the board in rom/download mode, choose **Flash a Blank
+Board** on the welcome screen, and follow the prompts. no command-line tools are
+required.
 
 ## hardware
 
@@ -226,7 +173,7 @@ when macos asks for the pin, touch the sensor.
 | -- | -- | -- |
 | microcontroller | seeed studio esp32-s3 | needs native usb and hardware uart. secure boot + flash encryption strongly recommended |
 | fingerprint sensor | zw101-style uart sensor | uses the common `0xef01` packet protocol |
-| computer | macos | hid mode needs the helper. piv/pam mode needs macos smart card support |
+| computer | macos 13 or later | hid mode needs the TinyTouch menu-bar app. piv/pam mode uses macos smart card support |
 | case | printed top/bottom stl | `hardware/case/case_top.stl` and `hardware/case/case_bottom.stl` |
 | wiring/solder/etc | misc | whatever your build needs |
 
@@ -240,13 +187,6 @@ the fingerprint sensor connects over uart to pins 6 and 7 for tx and rx.
 
 the interrupt pin can be connected anywhere. in firmware, it is connected to pin
 1.
-
-## notes
-
-do not commit:
-
-- `firmware/tiny_touch_keyboard/secrets.h`
-- `firmware/tiny_touch_smartcard/main/secrets.h`
 
 [cad](https://cad.onshape.com/documents/d0e6bb7977e6171d4e4a5086/w/1ded27ad6c634fd1fdaf26d0/e/aca67210e400490a08d0b29a?renderMode=0&uiState=6a4c1df32e292f12144a65fe). if you make changes, please make them open source as well.
 
