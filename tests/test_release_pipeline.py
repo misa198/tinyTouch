@@ -272,5 +272,25 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn('${current##*.} + 1', tag_release)
         self.assertIn("exec packaging/tag-release", (ROOT / "packaging" / "release").read_text())
 
+    def test_app_build_tag_and_release_workflow_contract(self):
+        workflows = ROOT / ".github" / "workflows"
+        build = (workflows / "app-build.yml").read_text()
+        tag = (workflows / "app-tag.yml").read_text()
+        release = (workflows / "app-release.yml").read_text()
+
+        self.assertIn("pull_request:", build)
+        self.assertIn("workflow_dispatch:", build)
+        self.assertIn("workflow_call:", build)
+        self.assertIn("swift test", build)
+        self.assertIn("xcodebuild", build)
+        self.assertIn("actions/upload-artifact@", build)
+        self.assertEqual(tag.count("workflow_dispatch:"), 1)
+        self.assertIn('tag="app-v$VERSION"', tag)
+        self.assertIn("actions/workflows/app-release.yml/dispatches", tag)
+        self.assertIn('tags: ["app-v*"]', release)
+        self.assertIn("uses: ./.github/workflows/app-build.yml", release)
+        self.assertIn("actions/download-artifact@", release)
+        self.assertIn("gh release create", release)
+
 if __name__ == "__main__":
     unittest.main()

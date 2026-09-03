@@ -190,8 +190,9 @@ final class AppState: ObservableObject {
                 if update.strategy == .ota {
                     firmware.phase = .writing; firmware.message = "Writing the inactive OTA slot…"
                     try await FirmwareSupport.ota(image: image, digest: update.asset.sha256,
-                        command: { [manager] command, timeout in
-                            try await manager.command(deviceID: device.id, command, timeout: timeout)
+                        command: { [manager, weak self] command, timeout in
+                            defer { if command == "AUTH" { self?.clearFingerprintPrompt(deviceID: device.id) } }
+                            return try await manager.command(deviceID: device.id, command, timeout: timeout)
                         }, progress: { [weak self] value in self?.firmware.progress = value })
                     firmware.phase = .reconnect; firmware.progress = 1
                     firmware.message = "OTA is staged. Unplug tinyTouch and reconnect it to boot the new firmware."

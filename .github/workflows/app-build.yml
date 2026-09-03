@@ -1,0 +1,65 @@
+name: App Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: App version embedded in the build
+        required: false
+        default: ""
+        type: string
+      ref:
+        description: Exact commit to build
+        required: false
+        default: ""
+        type: string
+    outputs:
+      artifact-name:
+        description: Uploaded app artifact name
+        value: ${{ jobs.app.outputs.artifact-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: macos-latest
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact-name }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Test app
+        run: swift test
+      - name: Build and package app
+        id: package
+        env:
+          APP_VERSION: ${{ inputs.version }}
+        run: |
+          settings=(CODE_SIGNING_ALLOWED=NO)
+          [[ -z "$APP_VERSION" ]] || settings+=(MARKETING_VERSION="$APP_VERSION")
+          xcodebuild -project TinyTouch.xcodeproj -scheme TinyTouch \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/TinyTouchDerived" \
+            "${settings[@]}" build
+          mkdir -p dist
+          bundle=TinyTouch-macOS.zip
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/TinyTouchDerived/Build/Products/Release/TinyTouch.app" \
+            "dist/$bundle"
+          (cd dist && shasum -a 256 "$bundle" > "$bundle.sha256")
+          echo "artifact-name=tinytouch-app-${APP_VERSION:-ci}" >> "$GITHUB_OUTPUT"
+          echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.package.outputs.artifact-name }}
+          path: |
+            app/dist/${{ steps.package.outputs.bundle }}
+            app/dist/${{ steps.package.outputs.bundle }}.sha256
+          if-no-files-found: error

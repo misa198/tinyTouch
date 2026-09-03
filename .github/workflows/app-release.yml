@@ -1,0 +1,75 @@
+name: App Release
+
+on:
+  push:
+    tags: ["app-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag created by app-tag.yml
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-app-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify app tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^app-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]
+          commit="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit" --jq .commit.verification.verified)" = true ]]
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$commit" ]]
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#app-v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    uses: ./.github/workflows/app-build.yml
+    with:
+      version: ${{ needs.validate.outputs.version }}
+      ref: ${{ needs.validate.outputs.commit }}
+
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: dist
+      - name: Verify and publish app release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check --strict TinyTouch-macOS.zip.sha256)
+          flags=(--verify-tag --generate-notes)
+          [[ "${RELEASE_TAG#app-v}" = *-* ]] && flags+=(--prerelease)
+          gh release create "$RELEASE_TAG" \
+            dist/TinyTouch-macOS.zip dist/TinyTouch-macOS.zip.sha256 \
+            --repo "$GITHUB_REPOSITORY" "${flags[@]}"
