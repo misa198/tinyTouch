@@ -80,10 +80,20 @@ final class FirmwareSupportTests: XCTestCase {
         let second = SerialDiscovery.identity(vendorID: 0x303A, productID: 0x1001, serial: nil,
             locationID: 0x1234, port: "/dev/cu.usbmodem9", advanced: false)
         XCTAssertEqual(first?.id, second?.id); XCTAssertNotEqual(first?.port, second?.port)
+        XCTAssertEqual(first?.kind, .rom)
         XCTAssertNil(SerialDiscovery.identity(vendorID: 0x10C4, productID: 0xEA60, serial: "A",
             locationID: 1, port: "/dev/cu.usbserial", advanced: false))
         XCTAssertEqual(SerialDiscovery.identity(vendorID: 0x10C4, productID: 0xEA60, serial: "A",
             locationID: 1, port: "/dev/cu.usbserial", advanced: true)?.kind, .serialAdapter)
+    }
+
+    func testFlashOnboardingIgnoresBriefROMDiscoveryGaps() {
+        var visibility = FlashOnboardingVisibility(), now = Date(timeIntervalSince1970: 0)
+        visibility.update(hasROM: true, now: now); XCTAssertTrue(visibility.visible)
+        now.addTimeInterval(1); visibility.update(hasROM: false, now: now); XCTAssertTrue(visibility.visible)
+        now.addTimeInterval(1); visibility.update(hasROM: true, now: now); XCTAssertTrue(visibility.visible)
+        now.addTimeInterval(2); visibility.update(hasROM: false, now: now)
+        now.addTimeInterval(2); visibility.update(hasROM: false, now: now); XCTAssertFalse(visibility.visible)
     }
 
     func testCBridgeRejectsMissingImageBeforeOpeningSerial() {

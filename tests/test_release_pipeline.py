@@ -238,6 +238,7 @@ class ReleasePipelineTests(unittest.TestCase):
         self.assertIn("expectedHeadOid", tag)
         self.assertIn("head_verified", tag)
         self.assertIn('.github/release-source.json', tag)
+        self.assertIn('channels/app-firmware.json', tag)
         self.assertIn('if tag_ref="$(gh api', tag)
         self.assertNotIn('.object.sha 2>/dev/null || true', tag)
         self.assertIn("verification.verified", tag)

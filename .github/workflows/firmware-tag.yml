@@ -4,7 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without the v prefix (for example 0.9.0 or 0.9.0-rc.1)
+        description: Release version without the v prefix (for example 0.9.0 or 0.9.0-rc.1)
+        required: true
+        type: string
+      min_app_version:
+        description: Minimum compatible app version (inclusive)
+        required: true
+        type: string
+      max_app_version_exclusive:
+        description: Maximum compatible app version (exclusive)
         required: true
         type: string
 
@@ -20,10 +28,15 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Create verified version commit and tag
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          MIN_APP_VERSION: ${{ inputs.min_app_version }}
+          MAX_APP_VERSION_EXCLUSIVE: ${{ inputs.max_app_version_exclusive }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" = refs/heads/master ]] || {
@@ -36,6 +49,11 @@ jobs:
           }
 
           repository="$GITHUB_REPOSITORY"
+          channel="$(printf '{\n  \"schema\": 1,\n  \"releases\": [{\n    \"version\": \"%s\",\n    \"minAppVersion\": \"%s\",\n    \"maxAppVersionExclusive\": \"%s\",\n    \"manifest\": \"https://github.com/%s/releases/download/v%s/release-manifest.json\"\n  }]\n}\n' "$VERSION" "$MIN_APP_VERSION" "$MAX_APP_VERSION_EXCLUSIVE" "$repository" "$VERSION")"
+          channel_path="$(mktemp)"
+          trap 'rm -f "$channel_path"' EXIT
+          printf '%s' "$channel" > "$channel_path"
+          python packaging/release_integrity.py channel "$channel_path"
           tag="v$VERSION"
           head="$(gh api "repos/$repository/git/ref/heads/master" --jq .object.sha)"
           current_version="$(gh api "repos/$repository/contents/VERSION?ref=$head" --jq .content | base64 --decode | tr -d '[:space:]')"
@@ -58,11 +76,12 @@ jobs:
             query='mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }'
             content="$(printf '%s\n' "$VERSION" | base64 -w0)"
             release_source="$(printf '{\"version\":\"%s\",\"source\":\"%s\"}\n' "$VERSION" "$head" | base64 -w0)"
+            channel="$(printf '%s' "$channel" | base64 -w0)"
             jq -n --arg query "$query" --arg repository "$repository" \
               --arg headline "Release tinyTouch $VERSION" --arg content "$content" \
-              --arg release_source "$release_source" --arg head "$head" \
+              --arg release_source "$release_source" --arg channel "$channel" --arg head "$head" \
               --argjson update_version "$update_version" \
-              '{query: $query, variables: {input: {branch: {repositoryNameWithOwner: $repository, branchName: "master"}, message: {headline: $headline}, expectedHeadOid: $head, fileChanges: {additions: ([{path: ".github/release-source.json", contents: $release_source}] + if $update_version then [{path: "VERSION", contents: $content}] else [] end)}}}}' \
+              '{query: $query, variables: {input: {branch: {repositoryNameWithOwner: $repository, branchName: "master"}, message: {headline: $headline}, expectedHeadOid: $head, fileChanges: {additions: ([{path: ".github/release-source.json", contents: $release_source}, {path: "channels/app-firmware.json", contents: $channel}] + if $update_version then [{path: "VERSION", contents: $content}] else [] end)}}}}' \
               > request.json
             commit="$(gh api graphql --input request.json --jq .data.createCommitOnBranch.commit.oid)"
             [[ "$commit" =~ ^[0-9a-f]{40}$ ]]

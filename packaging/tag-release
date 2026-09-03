@@ -5,19 +5,19 @@ project_dir="${0:A:h:h}"
 cd "$project_dir"
 
 if [[ "${1:-}" = --help || "${1:-}" = -h ]]; then
-  print "Usage: packaging/tag-release [version]"
+  print "Usage: packaging/tag-release <version> <min-app-version> <max-app-version-exclusive>"
   print "Dispatch the GitHub Actions tag workflow."
   exit 0
 fi
-if (( $# > 1 )); then
-  print -u2 "Usage: packaging/tag-release [version]"
+if (( $# != 3 )); then
+  print -u2 "Usage: packaging/tag-release <version> <min-app-version> <max-app-version-exclusive>"
   exit 2
 fi
 
-version="${1:-}"
-if [[ -z "$version" ]]; then
-  current="$(tr -d '[:space:]' < VERSION)"
-  version="${current%.*}.$(( ${current##*.} + 1 ))"
-fi
-gh workflow run firmware-tag.yml --ref master -f "version=$version"
+version="$1"
+min_app_version="$2"
+max_app_version_exclusive="$3"
+gh workflow run firmware-tag.yml --ref master -f "version=$version" \
+  -f "min_app_version=$min_app_version" \
+  -f "max_app_version_exclusive=$max_app_version_exclusive"
 print "Dispatched v$version; GitHub Actions will commit VERSION, tag, build, and release it."

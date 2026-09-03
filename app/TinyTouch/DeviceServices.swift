@@ -8,6 +8,17 @@ import Security
 
 enum DeviceKind: String, Hashable { case runtime, rom, serialAdapter }
 
+struct FlashOnboardingVisibility {
+    private(set) var visible = false
+    private var absentSince: Date?
+
+    mutating func update(hasROM: Bool, now: Date = Date()) {
+        if hasROM { visible = true; absentSince = nil }
+        else if let absentSince, now.timeIntervalSince(absentSince) >= 2 { visible = false }
+        else if absentSince == nil { absentSince = now }
+    }
+}
+
 struct DeviceIdentity: Identifiable, Hashable {
     let id: String
     let port: String

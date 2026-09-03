@@ -56,12 +56,15 @@ final class AppState: ObservableObject {
     @Published private(set) var keyboardMode = KeyboardMode.auto
     @Published private(set) var advancedFirmwareDevices = false
     @Published private(set) var firmware = FirmwareViewState()
+    @Published private(set) var showFlashOnboarding = false
 
     private let manager = DeviceManager(), defaults = UserDefaults.standard
     private var window: NSWindow?, windowCloseObserver: NSObjectProtocol?, knownOpened: Set<String> = []
     private var setupPassword: String?, setupKey: Data?
     private var firmwareUpdate: FirmwareUpdate?, firmwareImageURL: URL?
     private var pendingFactoryVerification: (id: String, locationID: Int?)?
+    private var flashOnboardingVisibility = FlashOnboardingVisibility()
+    private var newBoardFlashActive = false
     private let legacyPlist = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/LaunchAgents/com.tinytouch.helper.plist")
 
@@ -197,6 +200,43 @@ final class AppState: ObservableObject {
             busy = false
         }
     }
+
+    func flashNewBoard() {
+        guard !busy, let device = selectedDevice, device.identity.kind == .rom else {
+            firmware = FirmwareViewState(phase: .failed, message: "Connect an ESP32-S3 in download mode first.", error: "No board in download mode is selected.")
+            return
+        }
+        busy = true; newBoardFlashActive = true; showFlashOnboarding = true
+        firmwareUpdate = nil; firmwareImageURL = nil
+        firmware = FirmwareViewState(phase: .checking, target: device.name, current: "ROM mode",
+            message: "Fetching the reviewed firmware…")
+        Task {
+            do {
+                let channelData = try await Self.download(FirmwareSupport.channelURL)
+                let release = try FirmwareChannel.decode(channelData,
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")
+                let manifestData = try await Self.download(release.manifest)
+                let update = try FirmwareSupport.update(channelData: channelData, manifestData: manifestData,
+                    manifestURL: release.manifest,
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0",
+                    identity: device.identity, status: nil)
+                firmwareUpdate = update; firmware.latest = update.version.description; firmware.strategy = update.strategy
+                firmware.phase = .downloading; firmware.message = "Downloading and verifying firmware…"
+                let image = try await FirmwareSupport.verifiedDownload(update)
+                guard selectedDevice?.id == device.id else { throw FirmwareError.invalid("Selected board changed before flashing.") }
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("tinytouch-\(UUID().uuidString).bin")
+                try image.write(to: url, options: [.atomic]); firmwareImageURL = url
+                try await flashFactory(device: device, imageURL: url, manualBoot: false)
+            } catch {
+                firmware.phase = .failed; firmware.error = error.localizedDescription
+                if let value = error as? FirmwareError, case .manualReset = value { firmware.needsManualBoot = true }
+                firmware.message = "Flash stopped safely."
+            }
+            busy = false
+        }
+    }
+
+    func finishNewBoardFlash() { newBoardFlashActive = false; showFlashOnboarding = flashOnboardingVisibility.visible }
 
     func retryManualFactoryFlash() {
         guard !busy, firmware.needsManualBoot, let imageURL = firmwareImageURL, let device = selectedDevice else { return }
@@ -428,7 +468,12 @@ final class AppState: ObservableObject {
     }
 
     private func update(_ identities: [DeviceIdentity], opened: Set<String>, ready: Set<String>, errors: [String: Error]) {
+        flashOnboardingVisibility.update(hasROM: identities.contains { $0.kind == .rom })
+        showFlashOnboarding = flashOnboardingVisibility.visible || newBoardFlashActive
         let previous = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
+        let retainedROM = showFlashOnboarding && !identities.contains { $0.kind == .rom }
+            ? previous[selectedID ?? ""].flatMap { $0.identity.kind == .rom ? $0 : nil }
+                ?? previous.values.first(where: { $0.identity.kind == .rom }) : nil
         let newlyOpened = opened.subtracting(knownOpened); knownOpened = opened
         devices = identities.map { identity in
             var device = previous[identity.id] ?? DeviceViewState(identity: identity, connection: .connected)
@@ -439,6 +484,7 @@ final class AppState: ObservableObject {
             else if newlyOpened.contains(identity.id), device.connection != .error { device.message = nil; device.isError = false }
             return device
         }
+        if let retainedROM, retainedROM.identity.kind == .rom { devices.append(retainedROM) }
         if let pending = pendingFactoryVerification,
            let runtime = identities.first(where: { $0.kind == .runtime &&
                (pending.locationID == nil ? $0.id == pending.id : $0.locationID == pending.locationID) }),
@@ -453,7 +499,9 @@ final class AppState: ObservableObject {
                 } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Post-flash verification failed." }
             }
         }
-        if let setup { selectedID = setup.deviceID }
+        if let rom = identities.first(where: { $0.kind == .rom }) { selectedID = rom.id }
+        else if let retainedROM, retainedROM.identity.kind == .rom { selectedID = retainedROM.id }
+        else if let setup { selectedID = setup.deviceID }
         else if selectedID == nil || !identities.contains(where: { $0.id == selectedID }) { selectedID = identities.first?.id }
         if let selectedID { keyboardMode = KeyboardSettingsStore().load(deviceID: selectedID).keyboardLayout }
         for id in newlyOpened {
