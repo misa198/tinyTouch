@@ -12,6 +12,7 @@ TinyTouch is a native macOS menu-bar app for a tinyTouch fingerprint device. It 
 
 - Detects connected tinyTouch devices and shows their status.
 - Configures fingerprint-backed HID typing and stores credentials in Keychain.
+- Switches configured protocol 6 devices between HID and PIV mode.
 - Replaces `tinytouch setup` with an automatic HID/PIV setup wizard for factory-default protocol 6 devices; the CLI remains available for automation and recovery.
 - Supports legacy HID protocols 1–5 and protocol 6, including multiple trusted Macs.
 - Factory-resets protocol 6 devices and removes their matching local credentials.

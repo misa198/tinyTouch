@@ -72,6 +72,21 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn("MBEDTLS_OID_CLIENT_AUTH", piv)
         self.assertIn("mbedtls_x509write_crt_set_ext_key_usage", piv)
 
+    def test_piv_accepts_macos_signing_template(self) -> None:
+        piv = self.source("piv.c")
+        self.assertIn("tag == 0x81 && len > 0 && !*challenge", piv)
+        self.assertIn("tag == 0x80 && len > 0 && !witness", piv)
+        self.assertIn("tag == 0x82 && len > 0 && !response", piv)
+        self.assertIn("size_t chained_le = apdu_le(apdu, apdu_len, 0)", piv)
+        self.assertIn("respond_maybe_chunked(auth_result, off, apdu, apdu_len", piv)
+
+    def test_piv_dummy_pin_matches_documented_value(self) -> None:
+        piv = self.source("piv.c")
+        hid = self.source("touch_pin_hid.c")
+        self.assertIn("'0', '0', '0', '0', '0', '0', 0xff, 0xff", piv)
+        self.assertIn("HID_KEY_KEYPAD_0", hid)
+        self.assertNotIn("HID_KEY_KEYPAD_1", hid)
+
     def test_fingerprint_auth_requires_presence(self) -> None:
         source = self.source("touch_pin_hid.c")
         self.assertIn("if (!present || !fingerprint_is_ready() || !tud_hid_ready())", source)

@@ -29,12 +29,14 @@ private struct MenuContent: View {
 
     var body: some View {
         Button(app.summary) { app.showWindow() }.keyboardShortcut("o")
-        Toggle("Enable HID Service", isOn: Binding(
-            get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }
-        )).disabled(app.isFirmwareWriting)
-        Toggle("Launch at Login", isOn: Binding(
-            get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }
-        ))
+        if app.showsHIDServiceControls {
+            Toggle("Enable HID Service", isOn: Binding(
+                get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }
+            )).disabled(app.isFirmwareWriting)
+            Toggle("Launch at Login", isOn: Binding(
+                get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }
+            ))
+        }
         Divider()
         Button("Quit") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q").disabled(app.isFirmwareWriting)
     }

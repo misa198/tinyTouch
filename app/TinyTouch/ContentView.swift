@@ -20,6 +20,10 @@ struct ContentView: View {
         }
     }
 
+    private var sections: [Section] {
+        Section.allCases.filter { app.selectedMode == .hid || ($0 != .setup && $0 != .computers) }
+    }
+
     var body: some View {
         ZStack {
             LiquidBackdrop()
@@ -29,7 +33,7 @@ struct ContentView: View {
                 OnboardingView { section = .firmware; showMainUI = true }
             } else {
                 NavigationSplitView {
-                    List(Section.allCases, selection: $section) {
+                    List(sections, selection: $section) {
                         Label($0.rawValue, systemImage: $0.icon)
                             .fontWeight(section == $0 ? .semibold : .regular)
                             .padding(.vertical, 6)
@@ -56,16 +60,20 @@ struct ContentView: View {
             if let prompt = app.fingerprintPrompt { FingerprintPromptView(message: prompt.message) }
         }.frame(minWidth: 720, minHeight: 600)
             .animation(.easeInOut(duration: 0.15), value: app.fingerprintPrompt)
+            .onChange(of: app.selectedMode) { _ in if !sections.contains(section) { section = .overview } }
     }
 
     @ViewBuilder private var detail: some View {
-        switch section {
-        case .overview: OverviewView()
-        case .setup: HIDSetupView()
-        case .fingerprints: FingerprintsView()
-        case .computers: ComputersView { section = .setup }
-        case .firmware: FirmwareView()
-        case .settings: SettingsView()
+        if !sections.contains(section) { OverviewView() }
+        else {
+            switch section {
+            case .overview: OverviewView()
+            case .setup: HIDSetupView()
+            case .fingerprints: FingerprintsView()
+            case .computers: ComputersView { section = .setup }
+            case .firmware: FirmwareView()
+            case .settings: SettingsView()
+            }
         }
     }
 }

@@ -71,6 +71,10 @@ final class AppState: ObservableObject {
         .appendingPathComponent("Library/LaunchAgents/com.tinytouch.helper.plist")
 
     var selectedDevice: DeviceViewState? { devices.first { $0.id == selectedID } }
+    var selectedMode: SetupMode? { selectedDevice?.status.flatMap { SetupMode(rawValue: $0.mode) } }
+    var showsHIDServiceControls: Bool {
+        devices.isEmpty || devices.contains { $0.status == nil || $0.status?.mode == SetupMode.hid.rawValue }
+    }
     var summary: String {
         if let error = devices.first(where: { $0.connection == .error }) { return "Error — \(error.name)" }
         let ready = devices.filter { $0.connection == .ready }.count
@@ -313,7 +317,7 @@ final class AppState: ObservableObject {
     func startOverSetup() {
         guard !busy, var state = setup else { return }
         state.mode = nil; state.phase = .chooseMode; state.message = "Choose how you want to use tinyTouch."
-        state.error = nil; state.provisioningComplete = false; state.canSkipPairing = false
+        state.error = nil; state.provisioningComplete = false; state.canSkipPairing = false; state.pairingStarted = false
         setupPassword = nil; setupKey = nil; setup = state
     }
 
@@ -338,6 +342,41 @@ final class AppState: ObservableObject {
             clearDeviceMessage(id); manager.retry(id); return
         }
         perform(deviceID: id) { [self] in try await readStatus(id: id); return "Status updated." }
+    }
+
+    func changeMode(to mode: SetupMode) {
+        guard let id = selectedID, let device = selectedDevice else { return }
+        perform(deviceID: id) { [self] in
+            let current = try await status(id: id)
+            guard current.protocolVersion == 6 else {
+                throw DeviceError.response("Mode changes require protocol 6 firmware.")
+            }
+            guard current.sensorReady else { throw DeviceError.response("The fingerprint sensor is not responding.") }
+            guard current.mode != mode.rawValue else { return "tinyTouch is already in \(mode.rawValue.uppercased()) mode." }
+
+            var provisioned = current.isProvisioned(mode: mode)
+            if provisioned && mode == .hid {
+                let hosts = try await hostList(id, dialect: current.dialect)
+                let key = try await pairingKey(id)
+                let hasLocalPassword = try await hasPassword(id)
+                provisioned = try key.map { hosts.ids.contains(try HIDProtocol.keyID($0)) } == true && hasLocalPassword
+            }
+            if !provisioned {
+                setup = DeviceSetupState(deviceID: id, deviceName: device.name, mode: mode,
+                                         message: "Complete \(mode.rawValue.uppercased()) setup to switch modes.")
+                return nil
+            }
+
+            try await unlock(id, dialect: current.dialect)
+            guard let command = current.dialect.setMode(mode) else {
+                throw DeviceError.response("Mode changes require protocol 6 firmware.")
+            }
+            _ = try await manager.command(deviceID: id, command)
+            _ = try await waitForStatus(id: id, mode: mode)
+            _ = try await readStatus(id: id)
+            if mode == .hid { manager.markReady(id) }
+            return "Switched tinyTouch to \(mode.rawValue.uppercased()) mode. Existing PIV and HID data was preserved."
+        }
     }
 
     func configureHID(password: String, confirmation: String, enroll: Bool) {
@@ -692,7 +731,11 @@ final class AppState: ObservableObject {
         Task {
             let failure = await Task.detached { Self.runPIVPairing() }.value
             if let failure, var state = setup { state.recordPairingFailure(failure); setup = state }
-            else { completeSetup("PIV is ready and paired with macOS.") }
+            else if var state = setup {
+                state.pairingStarted = true
+                state.message = "When macOS asks for a PIN, touch tinyTouch; do not type the PIN manually."
+                setup = state
+            }
             busy = false
         }
     }
@@ -717,9 +760,14 @@ final class AppState: ObservableObject {
                 failure = result; Thread.sleep(forTimeInterval: 0.5); continue
             }
             let pairing = run(["pairing_ui", "-f"])
-            return SCAuthResult.pairing(exitCode: pairing.0, error: pairing.2)
+            return SCAuthResult.pairingLaunch(exitCode: pairing.0, error: pairing.2)
         }
         return failure
+    }
+
+    func confirmPIVPairing() {
+        guard !busy, setup?.mode == .piv, setup?.pairingStarted == true else { return }
+        completeSetup("PIV is ready and paired with macOS.")
     }
 
     private func updateSetup(_ phase: DeviceSetupPhase, _ message: String) {

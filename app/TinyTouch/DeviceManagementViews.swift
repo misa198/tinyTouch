@@ -17,7 +17,7 @@ struct HIDSetupView: View {
     @State private var enroll = true
     @State private var editing = false
     var body: some View { Page(title: "HID Setup", icon: "keyboard") { availableDevice(app) { device, status in
-        if status.mode != "hid" { RequirementPlaceholder(icon: "arrow.triangle.2.circlepath", title: "Switch tinyTouch to HID mode", description: "Use the supported external provisioning tool to switch modes, then reconnect tinyTouch.") }
+        if status.mode != "hid" { RequirementPlaceholder(icon: "arrow.triangle.2.circlepath", title: "Switch tinyTouch to HID mode", description: "Switch modes in Settings, then return here.") }
         else if !status.sensorReady { RequirementPlaceholder(icon: "touchid", title: "Fingerprint sensor unavailable", description: "The fingerprint sensor must be working before HID can be set up.") }
         else if device.connection == .ready && !editing { RequirementPlaceholder(icon: "checkmark.circle", title: "HID is ready", description: "This Mac has HID credentials for tinyTouch.", actionTitle: "Update Credentials", action: { editing = true }) }
         else { setupForm(fourViews: status.dialect == .protocol6) }
@@ -56,7 +56,7 @@ struct ComputersView: View {
     @State private var removeID: String?
     let goToSetup: () -> Void
     var body: some View { Page(title: "Computers", icon: "desktopcomputer") { availableDevice(app) { device, status in
-        if status.mode != "hid" { RequirementPlaceholder(icon: "arrow.triangle.2.circlepath", title: "Switch tinyTouch to HID mode", description: "Use the supported external provisioning tool to switch modes, then reconnect tinyTouch.") }
+        if status.mode != "hid" { RequirementPlaceholder(icon: "arrow.triangle.2.circlepath", title: "Switch tinyTouch to HID mode", description: "Switch modes in Settings, then return here.") }
         else if !status.sensorReady { RequirementPlaceholder(icon: "touchid", title: "Fingerprint sensor unavailable", description: "The fingerprint sensor must be working to manage HID computers.") }
         else if status.protocolVersion < 2 { RequirementPlaceholder(icon: "desktopcomputer", title: "Multiple computers are not supported", description: "This firmware uses protocol 1 and supports only one HID computer. Update firmware outside TinyTouch to use this page.") }
         else if device.connection != .ready { RequirementPlaceholder(icon: "keyboard", title: "Complete HID Setup first", description: "This Mac needs HID credentials before it can manage trusted computers.", actionTitle: "Go to HID Setup", action: goToSetup) }
@@ -72,17 +72,34 @@ struct ComputersView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
+    @State private var pendingMode: SetupMode?
     @State private var confirmingFactoryReset = false
     var body: some View { Page(title: "Settings", icon: "gear") {
-        Toggle("Enable HID background service", isOn: Binding(get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }))
-        Toggle("Launch at login", isOn: Binding(get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }))
-        Picker("Keyboard mapping", selection: Binding(get: { app.keyboardMode }, set: { app.setKeyboardMode($0) })) { ForEach(KeyboardMode.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 360).disabled(app.selectedDevice == nil)
+        if app.selectedMode != .piv {
+            Toggle("Enable HID background service", isOn: Binding(get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }))
+            Toggle("Launch at login", isOn: Binding(get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }))
+            Picker("Keyboard mapping", selection: Binding(get: { app.keyboardMode }, set: { app.setKeyboardMode($0) })) { ForEach(KeyboardMode.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 360).disabled(app.selectedDevice == nil)
+        }
+        Divider(); Text("Device Mode").font(.headline)
+        if let status = app.selectedDevice?.status, let current = SetupMode(rawValue: status.mode) {
+            let target: SetupMode = current == .hid ? .piv : .hid
+            Text("Current mode: \(current.rawValue.uppercased())").foregroundStyle(.secondary)
+            Button("Switch to \(target.rawValue.uppercased())") { pendingMode = target }
+                .buttonStyle(.borderedProminent)
+                .disabled(app.busy || !app.backgroundEnabled || app.selectedDevice?.connection == .error || status.protocolVersion != 6 || !status.sensorReady)
+            if status.protocolVersion != 6 { Text("Update this device to protocol 6 firmware to switch modes.").foregroundStyle(.secondary) }
+            else if !status.sensorReady { Text("The fingerprint sensor must be available to authorize a mode change.").foregroundStyle(.secondary) }
+        } else { Text("Connect a compatible tinyTouch to switch modes.").foregroundStyle(.secondary) }
         if app.legacyHelperDetected { ForEach(app.legacyOwners) { Text($0.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }; Button("Replace Legacy Helper") { app.replaceLegacyHelper() }.buttonStyle(.borderedProminent) }
-        Text("Passwords and pairing keys are stored only in your macOS Keychain. Replay state remains in ~/Library/Application Support/tinyTouch.").foregroundStyle(.secondary)
+        if app.selectedMode == .hid { Text("Passwords and pairing keys are stored only in your macOS Keychain. Replay state remains in ~/Library/Application Support/tinyTouch.").foregroundStyle(.secondary) }
         Button("Export Diagnostics…") { app.exportDiagnostics() }; Divider(); Text("Factory Reset").font(.headline)
         Text("Erase fingerprints, PIV keys, trusted computers, device settings, and this Mac's credentials for the selected tinyTouch.").foregroundStyle(.secondary)
         Button("Factory Reset", role: .destructive) { confirmingFactoryReset = true }.disabled(app.busy || !app.backgroundEnabled || app.selectedDevice?.connection == .error || app.selectedDevice?.status?.protocolVersion != 6 || app.selectedDevice?.status?.sensorReady != true)
         if let status = app.selectedDevice?.status, status.protocolVersion != 6 { Text("Update this device to protocol 6 firmware to use Factory Reset.").foregroundStyle(.secondary) } else if app.selectedDevice?.status?.sensorReady == false { Text("The fingerprint sensor must be available so its templates can be erased.").foregroundStyle(.secondary) }
         AppMessageView()
-    }.alert("Factory reset selected tinyTouch?", isPresented: $confirmingFactoryReset) { Button("Cancel", role: .cancel) {}; Button("Factory Reset", role: .destructive) { app.factoryReset() } } message: { Text("This permanently erases every fingerprint, PIV key, trusted computer, and device setting. TinyTouch will return to its unconfigured PIV state. Matching credentials and settings on this Mac will also be deleted.") } }
+    }.confirmationDialog("Switch tinyTouch mode?", isPresented: Binding(get: { pendingMode != nil }, set: { if !$0 { pendingMode = nil } }), titleVisibility: .visible) {
+        Button("Cancel", role: .cancel) { pendingMode = nil }
+        if let mode = pendingMode { Button("Switch to \(mode.rawValue.uppercased())") { pendingMode = nil; app.changeMode(to: mode) } }
+    } message: { Text("Touch the fingerprint sensor to authorize the change. Existing PIV keys, HID computers, fingerprints, and credentials will be preserved.") }
+    .alert("Factory reset selected tinyTouch?", isPresented: $confirmingFactoryReset) { Button("Cancel", role: .cancel) {}; Button("Factory Reset", role: .destructive) { app.factoryReset() } } message: { Text("This permanently erases every fingerprint, PIV key, trusted computer, and device setting. TinyTouch will return to its unconfigured PIV state. Matching credentials and settings on this Mac will also be deleted.") } }
 }

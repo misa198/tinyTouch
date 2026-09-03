@@ -52,7 +52,7 @@ static bool send_key(uint8_t modifier, uint8_t key) {
 static bool type_dummy_pin(void) {
   for (int i = 0; i < 6; i++) {
     // Numeric-keypad usages are independent of the active keyboard layout.
-    if (!send_key(0, HID_KEY_KEYPAD_1)) return false;
+    if (!send_key(0, HID_KEY_KEYPAD_0)) return false;
   }
   return send_key(0, HID_KEY_ENTER);
 }

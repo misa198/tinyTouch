@@ -381,24 +381,41 @@ static bool tlv_read_len(const uint8_t *buf, size_t buf_len, size_t *off, size_t
 static bool parse_dynamic_auth(const uint8_t *buf, size_t buf_len,
                                const uint8_t **challenge, size_t *challenge_len) {
   size_t off = 0;
-  bool saw_challenge = false;
-  bool saw_empty_response = false;
+  const uint8_t *witness = NULL;
+  size_t witness_len = 0;
+  const uint8_t *response = NULL;
+  size_t response_len = 0;
+  *challenge = NULL;
+  *challenge_len = 0;
   while (off < buf_len) {
     uint8_t tag = buf[off++];
     size_t len = 0;
     if (!tlv_read_len(buf, buf_len, &off, &len) || len > buf_len - off) return false;
-    if (tag == 0x81 && !saw_challenge && len > 0) {
+    if (tag == 0x81 && len > 0 && !*challenge) {
       *challenge = buf + off;
       *challenge_len = len;
-      saw_challenge = true;
-    } else if (tag == 0x82 && !saw_empty_response && len == 0) {
-      saw_empty_response = true;
-    } else {
+    } else if (tag == 0x80 && len > 0 && !witness) {
+      witness = buf + off;
+      witness_len = len;
+    } else if (tag == 0x82 && len > 0 && !response) {
+      response = buf + off;
+      response_len = len;
+    } else if (tag != 0x80 && tag != 0x81 && tag != 0x82) {
       return false;
     }
     off += len;
   }
-  return off == buf_len && saw_challenge && saw_empty_response;
+  // Prefer the explicit challenge, then preserve compatibility with hosts
+  // that place the RSA input in response or witness.
+  if (!*challenge && response) {
+    *challenge = response;
+    *challenge_len = response_len;
+  }
+  if (!*challenge && witness) {
+    *challenge = witness;
+    *challenge_len = witness_len;
+  }
+  return off == buf_len && *challenge;
 }
 
 static int piv_rng(void *ctx, unsigned char *out, size_t len) {
@@ -529,7 +546,7 @@ static bool handle_verify(const uint8_t *apdu, size_t apdu_len,
   const uint8_t *data = NULL;
   size_t data_len = 0;
   static const uint8_t expected_pin[8] = {
-    '1', '1', '1', '1', '1', '1', 0xff, 0xff,
+    '0', '0', '0', '0', '0', '0', 0xff, 0xff,
   };
   if (!read_lc_data(apdu, apdu_len, &data, &data_len) ||
       data_len != sizeof(expected_pin) ||
@@ -619,15 +636,16 @@ static bool handle_general_authenticate(const uint8_t *apdu, size_t apdu_len,
   size_t inner_len = 1 + encoded_len_size(sig_len) + sig_len;
   size_t required = 1 + encoded_len_size(inner_len) + inner_len + 2;
   if (required > response_cap) return false;
+  uint8_t auth_result[264];
   size_t off = 0;
-  response[off++] = 0x7c;
-  off += encode_len(response + off, inner_len);
-  response[off++] = 0x82;
-  off += encode_len(response + off, sig_len);
-  memcpy(response + off, sig, sig_len);
+  auth_result[off++] = 0x7c;
+  off += encode_len(auth_result + off, inner_len);
+  auth_result[off++] = 0x82;
+  off += encode_len(auth_result + off, sig_len);
+  memcpy(auth_result + off, sig, sig_len);
   off += sig_len;
-  *response_len = off;
-  return append_sw(response, response_len, response_cap, 0x9000);
+  return respond_maybe_chunked(auth_result, off, apdu, apdu_len,
+                               response, response_len, response_cap);
 }
 
 void piv_init(void) {
@@ -780,7 +798,7 @@ static bool piv_handle_apdu_locked(const uint8_t *apdu, size_t apdu_len,
     return append_sw(response, response_len, response_cap, 0x9000);
   }
 
-  uint8_t chained_apdu[8 + sizeof(chained_apdu_data)];
+  uint8_t chained_apdu[9 + sizeof(chained_apdu_data)];
   if (chained_apdu_data_len && ins == chained_ins && apdu[2] == chained_p1 && apdu[3] == chained_p2) {
     const uint8_t *data = NULL;
     size_t data_len = 0;
@@ -790,6 +808,7 @@ static bool piv_handle_apdu_locked(const uint8_t *apdu, size_t apdu_len,
       chained_apdu_data_len = 0;
       return append_sw(response, response_len, response_cap, 0x6700);
     }
+    size_t chained_le = apdu_le(apdu, apdu_len, 0);
     memcpy(chained_apdu_data + chained_apdu_data_len, data, data_len);
     chained_apdu_data_len += data_len;
 
@@ -803,6 +822,11 @@ static bool piv_handle_apdu_locked(const uint8_t *apdu, size_t apdu_len,
     memcpy(chained_apdu + 7, chained_apdu_data, chained_apdu_data_len);
     apdu = chained_apdu;
     apdu_len = 7 + chained_apdu_data_len;
+    if (chained_le) {
+      uint16_t encoded_le = chained_le == 65536 ? 0 : (uint16_t)chained_le;
+      chained_apdu[apdu_len++] = (uint8_t)(encoded_le >> 8);
+      chained_apdu[apdu_len++] = (uint8_t)encoded_le;
+    }
     chained_apdu_data_len = 0;
   } else if (chained_apdu_data_len) {
     chained_apdu_data_len = 0;

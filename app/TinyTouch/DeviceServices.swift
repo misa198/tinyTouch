@@ -52,9 +52,12 @@ struct DeviceStatus: Equatable {
         protocolVersion == 6 && mode == "piv" && fields["piv"] == "unconfigured" &&
             fingerprintCount == 0 && hidHosts == 0
     }
-    func isSetupComplete(mode: SetupMode) -> Bool {
-        protocolVersion == 6 && self.mode == mode.rawValue && (fingerprintCount ?? 0) > 0 &&
+    func isProvisioned(mode: SetupMode) -> Bool {
+        protocolVersion == 6 && (fingerprintCount ?? 0) > 0 &&
             (mode == .hid ? hidHosts > 0 : fields["piv"] == "ready")
+    }
+    func isSetupComplete(mode: SetupMode) -> Bool {
+        self.mode == mode.rawValue && isProvisioned(mode: mode)
     }
 
     init(line: String) throws {
@@ -105,6 +108,7 @@ struct DeviceSetupState: Equatable {
     var error: String?
     var provisioningComplete = false
     var canSkipPairing = false
+    var pairingStarted = false
 
     mutating func recordPairingFailure(_ message: String) {
         phase = .pair; error = message; provisioningComplete = true; canSkipPairing = true
@@ -126,8 +130,8 @@ enum SCAuthResult {
         return error.isEmpty ? "macOS has not discovered the tinyTouch PIV identity yet." : error
     }
 
-    static func pairing(exitCode: Int32, error: String) -> String? {
-        exitCode == 0 ? nil : (error.isEmpty ? "macOS PIV pairing did not complete." : error)
+    static func pairingLaunch(exitCode: Int32, error: String) -> String? {
+        exitCode == -1 ? (error.isEmpty ? "macOS PIV pairing could not start." : error) : nil
     }
 }
 

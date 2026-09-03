@@ -20,7 +20,7 @@ struct FirmwareView: View {
             if let device = app.selectedDevice {
                 Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
                     GridRow { Text("Target").foregroundStyle(.secondary); Text(device.name) }
-                    GridRow { Text("Current").foregroundStyle(.secondary); Text(app.firmware.current) }
+                    GridRow { Text("Current").foregroundStyle(.secondary); Text(device.status?.firmwareVersion ?? (device.identity.kind == .rom ? "ROM mode" : "Unknown")) }
                     GridRow { Text("Latest").foregroundStyle(.secondary); Text(app.firmware.latest) }
                     GridRow { Text("Strategy").foregroundStyle(.secondary); Text(app.firmware.strategy?.rawValue ?? "Not checked") }
                 }

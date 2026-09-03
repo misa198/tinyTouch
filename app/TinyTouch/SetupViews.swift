@@ -6,6 +6,10 @@ struct SetupWizardView: View {
     @State private var mode: SetupMode?
     @State private var password = ""
     @State private var confirmation = ""
+    init(setup: DeviceSetupState) {
+        self.setup = setup
+        _mode = State(initialValue: setup.mode)
+    }
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
@@ -53,11 +57,16 @@ struct SetupWizardView: View {
                 let current = steps.firstIndex(where: { $0.0 == setup.phase }) ?? 0
                 Label(step.1, systemImage: setup.phase == .complete || index < current ? "checkmark.circle.fill" : index == current && setup.error != nil ? "exclamationmark.circle.fill" : index == current ? "circle.inset.filled" : "circle").foregroundStyle(index <= current ? Color.primary : Color.secondary)
             }
-            if setup.phase == .pair && setup.provisioningComplete && setup.error == nil {
+            if setup.phase == .pair && setup.provisioningComplete && setup.error == nil && !setup.pairingStarted {
                 InformationDialog(title: "Reconnect tinyTouch",
                                   message: "Unplug tinyTouch, plug it back in, then continue. This lets macOS discover the new PIV identity.",
                                   icon: "cable.connector")
                 HStack { Button("I Reconnected — Pair with macOS") { app.pairPIV() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
+            } else if setup.phase == .pair && setup.provisioningComplete && setup.error == nil {
+                InformationDialog(title: "Finish pairing in macOS",
+                                  message: "At the PIN prompt, touch the tinyTouch sensor. It will enter the dummy PIN automatically.",
+                                  icon: "lock")
+                HStack { Button("I Finished Pairing") { app.confirmPIVPairing() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
             } else if let error = setup.error {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).padding(.top, 8)
                 HStack { Button("Retry") { app.retrySetup() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Start Over") { mode = nil; password = ""; confirmation = ""; app.startOverSetup() }.disabled(app.busy); if setup.canSkipPairing { Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) } }
