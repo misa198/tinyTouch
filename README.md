@@ -183,10 +183,51 @@ microcontroller families can work, but are not currently supported.
 
 ## wiring
 
-the fingerprint sensor connects over uart to pins 6 and 7 for tx and rx.
+the fingerprint sensor connects over uart (uart1) to the esp32-s3. the interrupt
+pin signals when a finger is detected.
 
-the interrupt pin can be connected anywhere. in firmware, it is connected to pin
-1.
+```mermaid
+block-beta
+  columns 3
+
+  space:1
+  sensor["ZW101\nFingerprint Sensor"]:1
+  space:1
+
+  space:3
+
+  vcc_s["VCC (3.3V)"]
+  wire_vcc["────────────────────────"]
+  vcc_e["3.3V"]
+
+  gnd_s["GND"]
+  wire_gnd["────────────────────────"]
+  gnd_e["GND"]
+
+  tx_s["TX"]
+  wire_tx["────────────────────────"]
+  tx_e["GPIO 43 (TX / UART1)"]
+
+  rx_s["RX"]
+  wire_rx["────────────────────────"]
+  rx_e["GPIO 44 (RX / UART1)"]
+
+  int_s["INT"]
+  wire_int["────────────────────────"]
+  int_e["GPIO 2 (Interrupt)"]
+
+  space:1
+  esp["Seeed Studio\nESP32-S3"]:1
+  space:1
+```
+
+| sensor pin | esp32-s3 pin | notes |
+| -- | -- | -- |
+| VCC | 3.3V | do not use 5V |
+| GND | GND | common ground |
+| TX | GPIO 43 (TX) | sensor tx → esp gpio 43 |
+| RX | GPIO 44 (RX) | sensor rx → esp gpio 44 |
+| INT | GPIO 2 | finger-present interrupt, active high |
 
 [cad](https://cad.onshape.com/documents/d0e6bb7977e6171d4e4a5086/w/1ded27ad6c634fd1fdaf26d0/e/aca67210e400490a08d0b29a?renderMode=0&uiState=6a4c1df32e292f12144a65fe). if you make changes, please make them open source as well.
 
