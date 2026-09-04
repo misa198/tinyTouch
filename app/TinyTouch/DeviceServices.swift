@@ -611,6 +611,7 @@ final class DeviceSession: @unchecked Sendable {
         var settings = termios()
         guard tcgetattr(descriptor, &settings) == 0 else { close(DeviceError.disconnected); return }
         cfmakeraw(&settings); cfsetspeed(&settings, speed_t(B115200))
+        settings.c_cc.16 = 1; settings.c_cc.17 = 0
         settings.c_cflag |= tcflag_t(CLOCAL | CREAD | CS8); settings.c_cflag &= ~tcflag_t(PARENB | CSTOPB | CRTSCTS)
         guard tcsetattr(descriptor, TCSANOW, &settings) == 0 else { close(DeviceError.disconnected); return }
         var dtr = Int32(TIOCM_DTR), rts = Int32(TIOCM_RTS)

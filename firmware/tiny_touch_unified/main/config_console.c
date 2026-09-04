@@ -112,21 +112,21 @@ static void clear_ota(void) {
 static void status(void) {
   char line[320];
   char slots[16] = "unknown";
+  char count[8] = "unknown";
   int slot_mask = fingerprint_slot_mask();
-  int count = 0;
   if (slot_mask >= 0) {
+    int enrolled = 0;
     size_t offset = 0;
     for (int slot = 1; slot <= 5; slot++) {
       if (!(slot_mask & (1 << (slot - 1)))) continue;
       offset += snprintf(slots + offset, sizeof(slots) - offset, "%s%d", offset ? "," : "", slot);
-      count++;
+      enrolled++;
     }
     if (!offset) strcpy(slots, "none");
-  } else {
-    count = fingerprint_count();
+    snprintf(count, sizeof(count), "%d", enrolled);
   }
   snprintf(line, sizeof(line),
-           "OK STATUS product_id=misa198.tinytouch.v1 protocol=6 firmware=%s build=%s mode=%s piv=%s sensor=%s fingerprints=%d "
+           "OK STATUS product_id=misa198.tinytouch.v1 protocol=6 firmware=%s build=%s mode=%s piv=%s sensor=%s fingerprints=%s "
            "fingerprint_slots=%s hosts=%u ota=%s type_delay=%u submit_enter=%u cooldown=%u led_idle=%u",
            TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_BUILD_ID, device_config_mode_name(),
            piv_uses_provisioned_keys() ? "ready" : "unconfigured",

@@ -100,6 +100,7 @@ final class HIDProtocolTests: XCTestCase {
         XCTAssertEqual(status.protocolVersion, 2); XCTAssertEqual(status.fingerprintCount, 3)
         XCTAssertEqual(status.fingerprintSlots, [1, 3, 5]); XCTAssertEqual(status.nextFingerprintSlot, 2)
         XCTAssertEqual(try DeviceStatus(line: "OK STATUS protocol=6 mode=hid fingerprints=0 fingerprint_slots=none").nextFingerprintSlot, 1)
+        XCTAssertNil(try DeviceStatus(line: "OK STATUS protocol=6 mode=hid fingerprints=unknown fingerprint_slots=unknown").fingerprintCount)
         XCTAssertNil(try DeviceStatus(line: "OK STATUS protocol=5 mode=hid fingerprints=2").nextFingerprintSlot)
         let hosts = try HIDHostList(line: "OK HID_KEY_IDS ids=0011223344556677 capacity=8")
         XCTAssertEqual(hosts.ids.count, 1); XCTAssertEqual(hosts.capacity, 8)
