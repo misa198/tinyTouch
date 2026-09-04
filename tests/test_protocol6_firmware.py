@@ -15,9 +15,9 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertNotIn("esp_restart", source)
         self.assertNotIn("RTC_CNTL_FORCE_DOWNLOAD_BOOT", source)
 
-    def test_watchdog_does_not_monitor_tinyusb_core_idle_task(self) -> None:
+    def test_watchdog_does_not_monitor_idle_tasks(self) -> None:
         defaults = (PROJECT / "sdkconfig.defaults").read_text()
-        self.assertIn("CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y", defaults)
+        self.assertIn("CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n", defaults)
         self.assertIn("CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n", defaults)
 
     def test_protocol_six_has_one_stable_usb_descriptor(self) -> None:

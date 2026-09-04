@@ -43,6 +43,16 @@ final class FirmwareSupportTests: XCTestCase {
             manifestURL: manifestURL, appVersion: "1.0", identity: identity, status: nil))
     }
 
+    func testCurrentFirmwareIsNotAnUpdateFailure() throws {
+        let status = try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.4 mode=hid sensor=ready fingerprints=1 hosts=1")
+        XCTAssertThrowsError(try FirmwareSupport.update(channelData: channel(), manifestData: manifest(), manifestURL: manifestURL,
+            appVersion: "1.0", identity: .init(id: "TT-X", port: "/dev/test"), status: status)) {
+            guard case FirmwareError.noUpdate = $0 else { return XCTFail("Expected noUpdate, got \($0)") }
+        }
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("TinyTouch/AppState.swift")).contains("catch FirmwareError.noUpdate"))
+    }
+
     func testChecksumAndStrategySelection() throws {
         let bytes = Data("test".utf8)
         let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()

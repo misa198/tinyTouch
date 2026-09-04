@@ -176,6 +176,8 @@ final class AppState: ObservableObject {
                 firmware.strategy = update.strategy; firmware.message = update.strategy == .ota
                     ? "OTA preserves fingerprints, keys, hosts, and settings."
                     : "Factory flash resets all device data. The image is written only after confirmation."
+            } catch FirmwareError.noUpdate {
+                firmware.phase = .complete; firmware.message = "tinyTouch already has the latest compatible firmware."
             } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Firmware check failed." }
         }
     }
