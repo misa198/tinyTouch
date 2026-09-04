@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "releases": [{
-    "version": "0.0.11",
+    "version": "0.0.12",
     "minAppVersion": "0.0.9",
     "maxAppVersionExclusive": "2.0.0",
-    "manifest": "https://github.com/misa198/tinyTouch/releases/download/v0.0.11/release-manifest.json"
+    "manifest": "https://github.com/misa198/tinyTouch/releases/download/v0.0.12/release-manifest.json"
   }]
 }
