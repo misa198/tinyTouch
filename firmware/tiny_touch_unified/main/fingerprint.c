@@ -4,6 +4,7 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "device_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -23,6 +24,7 @@ static const uint8_t FP_LED_BLUE = 0x01;
 static const uint8_t FP_LED_GREEN = 0x02;
 static const uint8_t FP_LED_RED = 0x04;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
+static const uint8_t FP_LED_FUNC_OFF = 4;
 
 static uint8_t current_led = 0xff;
 static SemaphoreHandle_t fp_mutex;
@@ -101,7 +103,6 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
   const size_t data_cap = (data && data_len) ? *data_len : 0;
   size_t out_len = 0;
   bool saw_ack = false;
-  TickType_t post_ack_until = 0;
   TickType_t start = xTaskGetTickCount();
   TickType_t deadline = pdMS_TO_TICKS(timeout_ms);
   if (data && data_len) *data_len = 0;
@@ -156,7 +157,6 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
           *data_len = out_len;
         }
         if (*confirm != 0x00 || !data || !data_len || out_len >= data_cap) return true;
-        post_ack_until = xTaskGetTickCount() + pdMS_TO_TICKS(120);
       } else if (packet_id == 0x02 && data && data_len) {
         size_t actual_len = response_payload_len;
         if (actual_len) {
@@ -173,8 +173,6 @@ static bool fp_command(uint8_t instruction, const uint8_t *params, size_t param_
       if (remaining) memmove(response, response + expected, remaining);
       pos = remaining;
     }
-
-    if (saw_ack && post_ack_until && xTaskGetTickCount() > post_ack_until) return true;
 
     int n = uart_read_bytes(FP_UART, response + pos, sizeof(response) - pos,
                             pdMS_TO_TICKS(10));
@@ -205,15 +203,28 @@ static void set_aura(uint8_t color) {
   }
 }
 
+static void set_idle_aura(void) {
+  if (device_config_idle_led_on()) {
+    set_aura(FP_LED_BLUE);
+    return;
+  }
+  if (current_led == 0) return;
+  uint8_t params[] = {FP_LED_FUNC_OFF, 0, 0, 0};
+  uint8_t confirm = 0xff;
+  bool off = fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
+             confirm == 0x00;
+  current_led = off ? 0 : 0xff;
+}
+
 static void show_result(bool ok) {
   set_aura(ok ? FP_LED_GREEN : FP_LED_RED);
   vTaskDelay(pdMS_TO_TICKS(350));
-  set_aura(FP_LED_BLUE);
+  set_idle_aura();
 }
 
 void fingerprint_led_idle(void) {
   if (!fp_take(1000)) return;
-  set_aura(FP_LED_BLUE);
+  set_idle_aura();
   fp_give();
 }
 

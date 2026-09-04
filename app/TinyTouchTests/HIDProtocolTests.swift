@@ -106,6 +106,9 @@ final class HIDProtocolTests: XCTestCase {
     }
 
     func testProtocolSixDialectStatusAliasesAndUnknownVersion() throws {
+        XCTAssertEqual(DeviceStatus.label(for: "fingerprint_slots"), "Fingerprint slots")
+        XCTAssertEqual(DeviceStatus.label(for: "product_id"), "Product")
+        XCTAssertEqual(DeviceStatus.label(for: "future_field"), "Future Field")
         XCTAssertEqual(DeviceDialect(protocolVersion: 1).unlock, "CONFIG_UNLOCK")
         XCTAssertEqual(DeviceDialect(protocolVersion: 5).enroll(slot: 2), "ENROLL 2")
         let current = DeviceDialect(protocolVersion: 6)
@@ -124,11 +127,14 @@ final class HIDProtocolTests: XCTestCase {
         XCTAssertNil(DeviceDialect(protocolVersion: 5).setMode(.hid))
         XCTAssertNil(DeviceDialect(protocolVersion: 5).pivCreate)
 
-        let status = try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.3 mode=hid sensor=ready fingerprints=4 hosts=2 type_delay=7 submit_enter=1 cooldown=800")
+        let status = try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.3 mode=hid sensor=ready fingerprints=4 hosts=2 type_delay=7 submit_enter=1 cooldown=800 led_idle=1")
         XCTAssertTrue(status.sensorReady); XCTAssertEqual(status.hidHosts, 2); XCTAssertTrue(status.isCompatible)
         XCTAssertEqual(status.typingDelayMS, 7); XCTAssertEqual(status.submitEnter, true); XCTAssertEqual(status.touchCooldownMS, 800)
-        let invalidSettings = try DeviceStatus(line: "OK STATUS protocol=6 mode=hid type_delay=0 submit_enter=yes cooldown=5001")
+        XCTAssertEqual(status.idleLEDOn, true)
+        let invalidSettings = try DeviceStatus(line: "OK STATUS protocol=6 mode=hid type_delay=0 submit_enter=yes cooldown=5001 led_idle=yes")
         XCTAssertNil(invalidSettings.typingDelayMS); XCTAssertNil(invalidSettings.submitEnter); XCTAssertNil(invalidSettings.touchCooldownMS)
+        XCTAssertNil(invalidSettings.idleLEDOn)
+        XCTAssertEqual(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv led_idle=0").idleLEDOn, false)
         XCTAssertTrue(try DeviceStatus(line: "OK STATUS protocol=6 firmware=0.8.3 mode=piv piv=unconfigured sensor=ready fingerprints=0 hosts=0").isFactoryDefault)
         XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=5 mode=piv piv=unconfigured sensor=ready fingerprints=0 hosts=0").isFactoryDefault)
         XCTAssertFalse(try DeviceStatus(line: "OK STATUS protocol=6 mode=piv piv=ready sensor=ready fingerprints=0 hosts=0").isFactoryDefault)

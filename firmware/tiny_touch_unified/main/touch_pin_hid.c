@@ -361,7 +361,7 @@ static void touch_hid_task(void *arg) {
 
     // Presence is the sole trigger for a capture. Idle operation never sends
     // sensor commands and therefore never flashes a failure indication.
-    if (!present || !fingerprint_is_ready() || !tud_hid_ready()) {
+    if (!present || !tud_hid_ready()) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }

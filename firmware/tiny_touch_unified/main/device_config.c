@@ -21,7 +21,10 @@ typedef struct {
   uint16_t touch_cooldown_ms;
   uint8_t hid_host_count;
   device_hid_host_t hid_hosts[DEVICE_CONFIG_MAX_HID_HOSTS];
+  uint8_t idle_led_off;
 } stored_config_t;
+
+_Static_assert(sizeof(stored_config_t) == 330, "stored config layout changed");
 
 static stored_config_t config;
 static SemaphoreHandle_t config_mutex;
@@ -50,6 +53,7 @@ static bool valid(const stored_config_t *value) {
       value->fingerprint_profile_views > 5 || value->submit_enter > 1 ||
       value->typing_delay_ms < 1 || value->typing_delay_ms > 100 ||
       value->touch_cooldown_ms < 100 || value->touch_cooldown_ms > 5000 ||
+      value->idle_led_off > 1 ||
       value->hid_host_count > DEVICE_CONFIG_MAX_HID_HOSTS) return false;
   if (value->mode == DEVICE_MODE_HID && value->hid_host_count == 0) return false;
   for (size_t i = 0; i < value->hid_host_count; i++) {
@@ -159,6 +163,8 @@ bool device_config_submit_enter(void) { lock(); bool value = config.submit_enter
 bool device_config_set_submit_enter(bool value) { lock(); stored_config_t c = config; c.submit_enter = value; bool ok = replace_locked(&c); unlock(); return ok; }
 uint16_t device_config_touch_cooldown_ms(void) { lock(); uint16_t value = config.touch_cooldown_ms; unlock(); return value; }
 bool device_config_set_touch_cooldown_ms(uint16_t value) { lock(); stored_config_t c = config; c.touch_cooldown_ms = value; bool ok = replace_locked(&c); unlock(); return ok; }
+bool device_config_idle_led_on(void) { lock(); bool value = !config.idle_led_off; unlock(); return value; }
+bool device_config_set_idle_led_on(bool value) { lock(); stored_config_t c = config; c.idle_led_off = !value; bool ok = replace_locked(&c); unlock(); return ok; }
 
 bool device_config_factory_reset(void) {
   lock(); stored_config_t candidate; defaults(&candidate); bool ok = replace_locked(&candidate); unlock(); return ok;

@@ -4,8 +4,8 @@ struct OverviewView: View {
     @EnvironmentObject private var app: AppState
     var body: some View { Page(title: "Overview", icon: "dot.radiowaves.left.and.right") { availableDevice(app) { device, status in
         Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
-            row("connection", device.connection.rawValue)
-            ForEach(status.fields.keys.sorted(), id: \.self) { key in row(key, status.fields[key]!) }
+            row("Connection", device.connection.rawValue)
+            ForEach(status.fields.keys.sorted(), id: \.self) { key in row(DeviceStatus.label(for: key), status.fields[key]!) }
         }
         DeviceMessageView()
     } } }
@@ -95,6 +95,11 @@ struct SettingsView: View {
                 }
             }
         }
+        if let idleLEDOn = app.selectedDevice?.status?.idleLEDOn {
+            Divider(); Text("Device Behavior").font(.headline)
+            IdleLEDSettingsView(enabled: idleLEDOn)
+                .id("\(app.selectedID ?? "")-\(idleLEDOn)")
+        }
         Divider(); Text("Device Mode").font(.headline)
         if let status = app.selectedDevice?.status, let current = SetupMode(rawValue: status.mode) {
             let target: SetupMode = current == .hid ? .piv : .hid
@@ -118,6 +123,25 @@ struct SettingsView: View {
         if let mode = pendingMode { Button("Switch to \(mode.rawValue.uppercased())") { pendingMode = nil; app.changeMode(to: mode) } }
     } message: { Text("Touch the fingerprint sensor to authorize the change. Existing PIV keys, HID computers, fingerprints, and credentials will be preserved.") }
     .alert("Factory reset selected tinyTouch?", isPresented: $confirmingFactoryReset) { Button("Cancel", role: .cancel) {}; Button("Factory Reset", role: .destructive) { app.factoryReset() } } message: { Text("This permanently erases every fingerprint, PIV key, trusted computer, and device setting. TinyTouch will return to its unconfigured PIV state. Matching credentials and settings on this Mac will also be deleted.") } }
+}
+
+private struct IdleLEDSettingsView: View {
+    @EnvironmentObject private var app: AppState
+    let originalEnabled: Bool
+    @State private var enabled: Bool
+
+    init(enabled: Bool) {
+        originalEnabled = enabled
+        _enabled = State(initialValue: enabled)
+    }
+
+    var body: some View {
+        Toggle("Keep fingerprint LED on while idle", isOn: $enabled)
+        Button("Apply") { app.setIdleLED(enabled) }
+            .buttonStyle(.borderedProminent)
+            .disabled(app.busy || !app.backgroundEnabled || enabled == originalEnabled)
+        Text("On by default. Applying requires fingerprint authorization.").foregroundStyle(.secondary)
+    }
 }
 
 private struct HIDDeviceSettingsView: View {

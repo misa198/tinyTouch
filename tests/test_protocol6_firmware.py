@@ -89,7 +89,8 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
 
     def test_fingerprint_auth_requires_presence(self) -> None:
         source = self.source("touch_pin_hid.c")
-        self.assertIn("if (!present || !fingerprint_is_ready() || !tud_hid_ready())", source)
+        self.assertIn("if (!present || !tud_hid_ready())", source)
+        self.assertNotIn("!fingerprint_is_ready()", source)
         self.assertNotIn("fingerprint_service_health", source)
         self.assertNotIn("usb_runtime", source)
 
@@ -105,10 +106,14 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
 
     def test_status_reports_exact_fingerprint_slots_and_live_settings(self) -> None:
         console = self.source("config_console.c")
+        config = self.source("device_config.c")
         fingerprint = self.source("fingerprint.c")
         self.assertIn("fingerprint_slot_mask()", console)
         self.assertIn("fingerprint_slots=%s", console)
-        self.assertIn("type_delay=%u submit_enter=%u cooldown=%u", console)
+        self.assertIn("type_delay=%u submit_enter=%u cooldown=%u led_idle=%u", console)
+        self.assertIn('strcmp(arguments, "LED_IDLE")', console)
+        self.assertIn("bool value = !config.idle_led_off", config)
+        self.assertIn("FP_LED_FUNC_OFF", fingerprint)
         self.assertIn("fp_command(0x1f", fingerprint)
 
 

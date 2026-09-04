@@ -29,6 +29,7 @@ if you would like to support this project, please consider [donating](https://gi
 - [install](#install)
   - [install the mac app](#install-the-mac-app)
   - [set up tinytouch](#set-up-tinytouch)
+- [build it yourself](#build-it-yourself)
 - [hardware](#hardware)
 - [wiring](#wiring)
 
@@ -166,6 +167,38 @@ in the app for later changes.
 for a blank ESP32-S3, put the board in rom/download mode, choose **Flash a Blank
 Board** on the welcome screen, and follow the prompts. no command-line tools are
 required.
+
+## build it yourself
+
+1. get the parts listed under [hardware](#hardware), then connect them exactly as
+   shown under [wiring](#wiring).
+2. install [ESP-IDF 5.3.x](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32s3/get-started/index.html)
+   at `~/esp/esp-idf`, or set `IDF_PATH` to its directory.
+3. clone this repository and enter it:
+
+   ```sh
+   git clone https://github.com/misa198/tinyTouch.git
+   cd tinyTouch
+   ```
+
+4. create a local firmware signing key once:
+
+   ```sh
+   source "${IDF_PATH:-$HOME/esp/esp-idf}/export.sh"
+   espsecure.py generate_signing_key --version 2 firmware/tiny_touch_unified/secure_boot_signing_key.pem
+   ```
+
+   keep this ignored `.pem` file private and backed up; future OTA builds for
+   this device must use the same key.
+5. hold the board's **BOOT** button while connecting USB, then build and flash:
+
+   ```sh
+   ./firmware/build-and-flash
+   ```
+
+   use `./firmware/build-and-flash --build-only` to compile without flashing, or
+   add `--port /dev/cu.usbmodem...` when more than one serial device is connected.
+6. install the mac app and follow [set up tinytouch](#set-up-tinytouch).
 
 ## hardware
 

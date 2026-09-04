@@ -127,14 +127,14 @@ static void status(void) {
   }
   snprintf(line, sizeof(line),
            "OK STATUS product_id=misa198.tinytouch.v1 protocol=6 firmware=%s build=%s mode=%s piv=%s sensor=%s fingerprints=%d "
-           "fingerprint_slots=%s hosts=%u ota=%s type_delay=%u submit_enter=%u cooldown=%u",
+           "fingerprint_slots=%s hosts=%u ota=%s type_delay=%u submit_enter=%u cooldown=%u led_idle=%u",
            TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_BUILD_ID, device_config_mode_name(),
            piv_uses_provisioned_keys() ? "ready" : "unconfigured",
            fingerprint_is_ready() ? "ready" : "offline", count, slots,
            (unsigned)device_config_hid_host_count(), firmware_update_staged() ? "staged" :
            (firmware_update_active() ? "writing" : "idle"),
            (unsigned)device_config_typing_delay_ms(), (unsigned)device_config_submit_enter(),
-           (unsigned)device_config_touch_cooldown_ms());
+           (unsigned)device_config_touch_cooldown_ms(), (unsigned)device_config_idle_led_on());
   reply(line);
 }
 
@@ -154,6 +154,10 @@ static void set_value(char *arguments) {
   if (ok && strcmp(arguments, "TYPE_DELAY") == 0) ok = device_config_set_typing_delay_ms(number);
   else if (ok && strcmp(arguments, "SUBMIT_ENTER") == 0 && number <= 1) ok = device_config_set_submit_enter(number);
   else if (ok && strcmp(arguments, "COOLDOWN") == 0) ok = device_config_set_touch_cooldown_ms(number);
+  else if (ok && strcmp(arguments, "LED_IDLE") == 0 && number <= 1) {
+    ok = device_config_set_idle_led_on(number);
+    if (ok) fingerprint_led_idle();
+  }
   else ok = false;
   reply(ok ? "OK SET" : "ERR SET");
 }

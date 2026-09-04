@@ -371,6 +371,23 @@ final class AppState: ObservableObject {
         }
     }
 
+    func setIdleLED(_ enabled: Bool) {
+        guard let id = selectedID else { return }
+        perform(deviceID: id) { [self] in
+            let current = try await status(id: id)
+            guard current.protocolVersion == 6, current.idleLEDOn != nil else {
+                throw DeviceError.response("Update this device to firmware that supports the idle LED setting.")
+            }
+            try await unlock(id, dialect: current.dialect)
+            _ = try await manager.command(deviceID: id, "SET LED_IDLE \(enabled ? 1 : 0)")
+            let updated = try await readStatus(id: id)
+            guard updated.idleLEDOn == enabled else {
+                throw DeviceError.response("The device did not confirm the idle LED setting.")
+            }
+            return "Idle LED setting saved."
+        }
+    }
+
     func changeMode(to mode: SetupMode) {
         guard let id = selectedID, let device = selectedDevice else { return }
         perform(deviceID: id) { [self] in

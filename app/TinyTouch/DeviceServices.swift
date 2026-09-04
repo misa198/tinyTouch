@@ -35,7 +35,19 @@ struct DeviceIdentity: Identifiable, Hashable {
 
 struct DeviceStatus: Equatable {
     static let productID = "misa198.tinytouch.v1"
+    private static let labels = [
+        "product_id": "Product", "protocol": "Protocol", "firmware": "Firmware",
+        "firmware_version": "Firmware", "build": "Build", "mode": "Mode",
+        "piv": "PIV", "sensor": "Fingerprint sensor", "fingerprints": "Fingerprints",
+        "fingerprint_slots": "Fingerprint slots", "hosts": "Trusted computers",
+        "hid_hosts": "Trusted computers", "hid_key": "HID key", "ota": "Firmware update",
+        "type_delay": "Typing delay", "submit_enter": "Submit Enter",
+        "cooldown": "Touch cooldown", "led_idle": "Idle LED",
+    ]
     let fields: [String: String]
+    static func label(for key: String) -> String {
+        labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
+    }
     var firmwareVersion: String { fields["firmware_version"] ?? fields["firmware"] ?? "Unknown" }
     var protocolVersion: Int { Int(fields["protocol"] ?? "1") ?? 0 }
     var `protocol`: Int { protocolVersion }
@@ -65,6 +77,9 @@ struct DeviceStatus: Equatable {
     }
     var touchCooldownMS: Int? {
         fields["cooldown"].flatMap(Int.init).flatMap { (100...5000).contains($0) ? $0 : nil }
+    }
+    var idleLEDOn: Bool? {
+        fields["led_idle"].flatMap { $0 == "1" ? true : ($0 == "0" ? false : nil) }
     }
     var sensorReady: Bool { ["ok", "ready"].contains(sensor) }
     var hidHosts: Int { Int(fields["hid_hosts"] ?? fields["hosts"] ?? "0") ?? 0 }
@@ -593,12 +608,10 @@ final class DeviceSession: @unchecked Sendable {
             let error: DeviceError = errno == EBUSY ? .busy(identity.port) : .disconnected
             close(error); return
         }
-        _ = fcntl(descriptor, F_SETFL, 0)
         var settings = termios()
         guard tcgetattr(descriptor, &settings) == 0 else { close(DeviceError.disconnected); return }
         cfmakeraw(&settings); cfsetspeed(&settings, speed_t(B115200))
         settings.c_cflag |= tcflag_t(CLOCAL | CREAD | CS8); settings.c_cflag &= ~tcflag_t(PARENB | CSTOPB | CRTSCTS)
-        settings.c_cc.16 = 0; settings.c_cc.17 = 2
         guard tcsetattr(descriptor, TCSANOW, &settings) == 0 else { close(DeviceError.disconnected); return }
         var dtr = Int32(TIOCM_DTR), rts = Int32(TIOCM_RTS)
         _ = ioctl(descriptor, TIOCMBIS, &dtr); _ = ioctl(descriptor, TIOCMBIC, &rts)
