@@ -1,29 +1,28 @@
-## interested in preassembled versions? pre order now:
+# tinyTouch
 
-[![Download TinyTouch for macOS](https://img.shields.io/badge/download-TinyTouch_for_macOS-007AFF?logo=apple&logoColor=white)](https://github.com/misa198/tinyTouch/releases/latest/download/TinyTouch-macOS.zip)
+<a href="https://github.com/misa198/tinyTouch/releases/latest/download/TinyTouch-macOS.zip">
+<img  alt="tinyTouch" src="https://img.shields.io/badge/download-TinyTouch_for_macOS-007AFF?logo=apple&logoColor=white" />
+</a>
 
-<img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
+Build a DIY Touch ID for macOS for about $20 with an ESP32-S3 and a ZW101-style fingerprint sensor—no need to buy Apple’s $149 Magic Keyboard just to get a fingerprint reader.
 
-# tinytouch
-authenticate, sudo, and log in with your fingerprint wire(less)ly without having
-to spend $149.
+This repo contains a native macOS UI apps and ESP32 firmware derived from [zimengxiong/tinytouch](https://github.com/zimengxiong/tinytouch).
 
-build guide: https://www.youtube.com/watch?v=YsP1hRg28Gw
+<p align="center">
+<br/>
+<img width="720" alt="tinyTouch" src="docs/hero.png" />
+</p>
+<p align="center">
+  <img width="30%" alt="Flash firmware" src="docs/flash.png" />
+  <img width="30%" alt="Onboarding" src="docs/onboarding.png" />
+  <img width="30%" alt="Settings" src="docs/settings.png" />
+</p>
 
-https://github.com/user-attachments/assets/efede271-6d84-441d-919c-f5532f687c4e
+## See it in action
 
-PIV authentication of sudo:
+[Build guide on YouTube](https://www.youtube.com/watch?v=YsP1hRg28Gw)
 
-https://github.com/user-attachments/assets/c197dd9c-81e5-4150-9793-d2e445651dfd
-
-PIV authentication of lockscreen (you know its PIV because it says PIN and not password in the entry field) (the typing is just the PIV PIN, which we bypass (since we gate by the fingerprint), read below to learn more about it)
-
-https://github.com/user-attachments/assets/88014cb2-34d2-4d63-8998-54f0561364eb
-
-if you would like to support this project, please consider [donating](https://github.com/sponsors/ZimengXiong) or contributing!
-
-
-## table of contents
+## Table of Contents
 
 - [red pill or blue pill?](#red-pill-or-blue-pill)
 - [install](#install)
@@ -33,7 +32,7 @@ if you would like to support this project, please consider [donating](https://gi
 - [hardware](#hardware)
 - [wiring](#wiring)
 
-## red pill or blue pill?
+## Red pill or blue pill?
 
 there are two ways to use tinytouch on your computer: `HID` and `PIV/PAM` mode. read about how they work in the sections below.
 
@@ -41,34 +40,34 @@ each has its advantages, and we want to scare you a tiny bit so you actually do
 your diligence and understand the security implications of such a device before
 you decide whether you are willing to take on the risks:
 
-| features | HID | PIV/PAM* |
-| -- | -- | -- |
-| keyboardless login | ✅ | ✅ |
-| sudo prompts | ✅ | ✅ |
-| apple TCC (privacy & security) | ✅ | ✅|
-| general settings | ✅ | ❌ |
-| keychain/apple passwords | ✅ | ❌ |
-| everywhere your password is accepted (remote SSH sessions, etc) | ✅ | depends, but probably not |
+| features                                                        | HID | PIV/PAM\*                 |
+| --------------------------------------------------------------- | --- | ------------------------- |
+| keyboardless login                                              | ✅  | ✅                        |
+| sudo prompts                                                    | ✅  | ✅                        |
+| apple TCC (privacy & security)                                  | ✅  | ✅                        |
+| general settings                                                | ✅  | ❌                        |
+| keychain/apple passwords                                        | ✅  | ❌                        |
+| everywhere your password is accepted (remote SSH sessions, etc) | ✅  | depends, but probably not |
 
-| security | HID | PIV/PAM* |
-| -- | -- | -- |
-| fingerprint sensor <-> esp | 🔴 (unauth'ed UART) | 🔴 (unauth'ed UART) |
-| esp <-> computer negotiation | 🟢 (shared-key mac/encryption) | 🔴 (plain usb ccid/apdu) |
-| authentication | 🔴 (password typed over hid) | 🟢 (piv challenge/response) |
+| security                     | HID                            | PIV/PAM\*                   |
+| ---------------------------- | ------------------------------ | --------------------------- |
+| fingerprint sensor <-> esp   | 🔴 (unauth'ed UART)            | 🔴 (unauth'ed UART)         |
+| esp <-> computer negotiation | 🟢 (shared-key mac/encryption) | 🔴 (plain usb ccid/apdu)    |
+| authentication               | 🔴 (password typed over hid)   | 🟢 (piv challenge/response) |
 
-| attack | HID | PIV/PAM* |
-| -- | -- | -- |
-| sensor uart spoofing^ | yes | yes |
-| wrong focused field | yes | no |
-| malicious password field | yes | no |
-| usb traffic sniffing | low impact (channel is encrypted/mac'ed) | can observe apdus, not piv private key |
-| usb keylogger | can reveal password | cannot reveal key |
-| usb command injection | reject bad macs/replays | device may receive apdus, but auth still needs fingerprint-gated key use |
-| flash dumping (secure boot/flash encryption off) | shared-key exposable | piv key exposable |
-| flash dumping (secure boot/flash encryption on) | shared-key non-exportable | piv key non-exportable |
-| flash dumping (with secure element) | shared key non-exportable | piv key non-exportable |
+| attack                                           | HID                                      | PIV/PAM\*                                                                |
+| ------------------------------------------------ | ---------------------------------------- | ------------------------------------------------------------------------ |
+| sensor uart spoofing^                            | yes                                      | yes                                                                      |
+| wrong focused field                              | yes                                      | no                                                                       |
+| malicious password field                         | yes                                      | no                                                                       |
+| usb traffic sniffing                             | low impact (channel is encrypted/mac'ed) | can observe apdus, not piv private key                                   |
+| usb keylogger                                    | can reveal password                      | cannot reveal key                                                        |
+| usb command injection                            | reject bad macs/replays                  | device may receive apdus, but auth still needs fingerprint-gated key use |
+| flash dumping (secure boot/flash encryption off) | shared-key exposable                     | piv key exposable                                                        |
+| flash dumping (secure boot/flash encryption on)  | shared-key non-exportable                | piv key non-exportable                                                   |
+| flash dumping (with secure element)              | shared key non-exportable                | piv key non-exportable                                                   |
 
-*PIV/PAM always uses HID to deliver the mandatory PIV PIN, which we do not use.
+\*PIV/PAM always uses HID to deliver the mandatory PIV PIN, which we do not use.
 authorization is still gated by your fingerprint. the PIV PIN is not your
 password, and is not considered sensitive in our scenario.
 
@@ -79,6 +78,7 @@ involve filling the insides of the device with black epoxy. a more proper fix
 would be upgrading to a more secure fingerprint sensor.
 
 ### so... which pill, if any?
+
 this depends on:
 
 1. your security tolerance
@@ -87,7 +87,7 @@ this depends on:
 4. family/roommate relations
 5. technical skill set of family members/roommates
 
-risks are low to begin with since every attack here requires *physical access* to
+risks are low to begin with since every attack here requires _physical access_ to
 both the device and your mac.
 
 so ask yourself: will your device ever leave your desk? can your roommates
@@ -190,6 +190,7 @@ required.
 
    keep this ignored `.pem` file private and backed up; future OTA builds for
    this device must use the same key.
+
 5. hold the board's **BOOT** button while connecting USB, then build and flash:
 
    ```sh
@@ -198,17 +199,18 @@ required.
 
    use `./firmware/build-and-flash --build-only` to compile without flashing, or
    add `--port /dev/cu.usbmodem...` when more than one serial device is connected.
+
 6. install the mac app and follow [set up tinytouch](#set-up-tinytouch).
 
 ## hardware
 
-| part | used here | notes |
-| -- | -- | -- |
-| microcontroller | seeed studio esp32-s3 | needs native usb and hardware uart. secure boot + flash encryption strongly recommended |
-| fingerprint sensor | zw101-style uart sensor | uses the common `0xef01` packet protocol |
-| computer | macos 13 or later | hid mode needs the TinyTouch menu-bar app. piv/pam mode uses macos smart card support |
-| case | printed top/bottom stl | `hardware/case/case_top.stl` and `hardware/case/case_bottom.stl` |
-| wiring/solder/etc | misc | whatever your build needs |
+| part               | used here               | notes                                                                                   |
+| ------------------ | ----------------------- | --------------------------------------------------------------------------------------- |
+| microcontroller    | seeed studio esp32-s3   | needs native usb and hardware uart. secure boot + flash encryption strongly recommended |
+| fingerprint sensor | zw101-style uart sensor | uses the common `0xef01` packet protocol                                                |
+| computer           | macos 13 or later       | hid mode needs the TinyTouch menu-bar app. piv/pam mode uses macos smart card support   |
+| case               | printed top/bottom stl  | `hardware/case/case_top.stl` and `hardware/case/case_bottom.stl`                        |
+| wiring/solder/etc  | misc                    | whatever your build needs                                                               |
 
 other esp32-s3 boards should work if the usb and uart pins are available. other
 fingerprint sensors may work if they speak the same uart protocol. other
@@ -254,18 +256,16 @@ block-beta
   space:1
 ```
 
-| sensor pin | esp32-s3 pin | notes |
-| -- | -- | -- |
-| VCC | 3.3V | do not use 5V |
-| GND | GND | common ground |
-| TX | GPIO 44 (RX) | sensor tx → esp rx |
-| RX | GPIO 43 (TX) | sensor rx → esp tx |
-| INT | GPIO 2 | finger-present interrupt, active high |
+| sensor pin | esp32-s3 pin | notes                                 |
+| ---------- | ------------ | ------------------------------------- |
+| VCC        | 3.3V         | do not use 5V                         |
+| GND        | GND          | common ground                         |
+| TX         | GPIO 44 (RX) | sensor tx → esp rx                    |
+| RX         | GPIO 43 (TX) | sensor rx → esp tx                    |
+| INT        | GPIO 2       | finger-present interrupt, active high |
 
-[cad](https://cad.onshape.com/documents/d0e6bb7977e6171d4e4a5086/w/1ded27ad6c634fd1fdaf26d0/e/aca67210e400490a08d0b29a?renderMode=0&uiState=6a4c1df32e292f12144a65fe). if you make changes, please make them open source as well.
+### CAD Models
 
-## bonus images
+- [3D Models for Seeed Studio ESP32-S3](https://www.printables.com/model/1775348-tinytouch-fingerprint-unlock-device-for-mac)
+- [3D Models for ESP32S3 SuperMini](https://www.printables.com/model/1797195-remixed-tinytouch-fingerprint-unlock-device-for-ma)
 
-<img width="2261" height="1347" alt="render2" src="https://github.com/user-attachments/assets/5f107d74-d651-4e3b-90ed-f37dcaa026ac" />
-<img width="1238" height="901" alt="cross" src="https://github.com/user-attachments/assets/6a7062d9-ec56-4aac-adad-00d888e7d486" />
-<img width="1280" height="957" alt="tinyTouch" src="https://github.com/user-attachments/assets/ad66c9b3-5823-44d3-bd73-bba64f2e60ab" />
