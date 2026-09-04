@@ -9,8 +9,8 @@ struct InformationDialog: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon).foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.semibold))
-                Text(message).font(.callout).foregroundStyle(.secondary)
+                Text(L10n.text(title)).font(.callout.weight(.semibold))
+                Text(L10n.text(message)).font(.callout).foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -26,8 +26,8 @@ struct FingerprintPromptView: View {
             Color.black.opacity(0.3).ignoresSafeArea()
             VStack(spacing: 16) {
                 Image(systemName: "touchid").font(.system(size: 42)).foregroundStyle(.tint)
-                Text("Fingerprint Required").font(.title2.bold())
-                Text(message).foregroundStyle(.secondary)
+                Text("fingerprint_required").font(.title2.bold())
+                Text(L10n.text(message)).foregroundStyle(.secondary)
                 ProgressView()
             }.padding(28).frame(minWidth: 320).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous)).shadow(radius: 24)
         }.transition(.opacity).accessibilityElement(children: .combine).accessibilityAddTraits(.isModal)
@@ -39,19 +39,19 @@ struct DevicePicker: View {
     var body: some View {
         HStack(spacing: 12) {
             if app.devices.count > 1 {
-                Picker("Device", selection: $app.selectedID) { ForEach(app.devices) { Text($0.name).tag(Optional($0.id)) } }.frame(maxWidth: 360).disabled(app.busy)
+                Picker("device_picker_label", selection: $app.selectedID) { ForEach(app.devices) { Text(L10n.text($0.name)).tag(Optional($0.id)) } }.id(app.language).frame(maxWidth: 360).disabled(app.busy)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(app.selectedDevice?.name ?? "No tinyTouch connected").font(.headline)
+                    Text(L10n.text(app.selectedDevice?.name ?? "no_tinytouch_connected")).font(.headline)
                     Label(status, systemImage: "circle.fill").font(.caption).foregroundStyle(statusColor).labelStyle(.titleAndIcon)
                 }
             }
             Spacer()
             if app.busy { ProgressView().controlSize(.small) }
-            Button { app.refresh() } label: { Image(systemName: "arrow.clockwise") }.help("Refresh or retry this device").disabled(app.selectedDevice == nil || app.busy)
+            Button { app.refresh() } label: { Image(systemName: "arrow.clockwise") }.help("refresh_retry_device").disabled(app.selectedDevice == nil || app.busy)
         }.padding(.horizontal, 22).padding(.vertical, 13).background(.thinMaterial).overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.14)).frame(height: 1) }
     }
-    private var status: String { app.selectedDevice?.connection.rawValue.capitalized ?? "Connect a device" }
+    private var status: String { app.selectedDevice.map { L10n.deviceValue($0.connection.rawValue) } ?? L10n.text("connect_device") }
     private var statusColor: Color {
         switch app.selectedDevice?.connection {
         case .ready: .green
@@ -71,7 +71,7 @@ struct Page<Content: View>: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 14) {
                     Image(systemName: icon).font(.title2.bold()).foregroundStyle(.tint).frame(width: 44, height: 44).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    Text(title).font(.largeTitle.bold())
+                    Text(L10n.text(title)).font(.largeTitle.bold())
                 }
                 VStack(alignment: .leading, spacing: 18) { content }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxWidth: 820, alignment: .leading).padding(28)
@@ -83,7 +83,7 @@ struct DeviceMessageView: View {
     @EnvironmentObject private var app: AppState
     var body: some View {
         if let message = app.selectedDevice?.message {
-            Label(message, systemImage: app.selectedDevice?.isError == true ? "exclamationmark.triangle.fill" : "checkmark.circle.fill").foregroundStyle(app.selectedDevice?.isError == true ? .red : .green).textSelection(.enabled)
+            Label(L10n.text(message), systemImage: app.selectedDevice?.isError == true ? "exclamationmark.triangle.fill" : "checkmark.circle.fill").foregroundStyle(app.selectedDevice?.isError == true ? .red : .green).textSelection(.enabled)
         }
     }
 }
@@ -92,7 +92,7 @@ struct AppMessageView: View {
     @EnvironmentObject private var app: AppState
     var body: some View {
         if let message = app.appMessage {
-            Label(message, systemImage: app.appMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill").foregroundStyle(app.appMessageIsError ? .red : .green).textSelection(.enabled)
+            Label(L10n.text(message), systemImage: app.appMessageIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill").foregroundStyle(app.appMessageIsError ? .red : .green).textSelection(.enabled)
         }
     }
 }
@@ -106,26 +106,26 @@ struct RequirementPlaceholder: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: icon).font(.system(size: 40)).foregroundStyle(.secondary)
-            Text(title).font(.title2.bold())
-            Text(description).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            if let actionTitle, let action { Button(actionTitle, action: action).buttonStyle(.borderedProminent) }
+            Text(L10n.text(title)).font(.title2.bold())
+            Text(L10n.text(description)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if let actionTitle, let action { Button(L10n.text(actionTitle), action: action).buttonStyle(.borderedProminent) }
         }.frame(maxWidth: .infinity).padding(.vertical, 60)
     }
 }
 
 @MainActor @ViewBuilder func availableDevice<Content: View>(_ app: AppState, @ViewBuilder content: (DeviceViewState, DeviceStatus) -> Content) -> some View {
     if !app.backgroundEnabled {
-        RequirementPlaceholder(icon: "pause.circle", title: "HID service is paused", description: "Enable the HID service to communicate with tinyTouch.", actionTitle: "Enable HID Service", action: { app.setBackgroundEnabled(true) })
+        RequirementPlaceholder(icon: "pause.circle", title: "hid_service_paused", description: "enable_hid_communicate_tinytouch", actionTitle: "enable_hid_service", action: { app.setBackgroundEnabled(true) })
     } else if let device = app.selectedDevice {
         if device.connection == .error {
-            RequirementPlaceholder(icon: "exclamationmark.triangle", title: "Connection failed", description: device.message ?? "TinyTouch could not connect to this device.", actionTitle: "Retry", action: { app.refresh() })
+            RequirementPlaceholder(icon: "exclamationmark.triangle", title: "connection_failed", description: device.message ?? "tinytouch_not_connect_device", actionTitle: "common_retry", action: { app.refresh() })
         } else if let status = device.status {
             content(device, status)
         } else {
-            VStack(spacing: 12) { ProgressView(); Text("Reading device status…").foregroundStyle(.secondary) }.frame(maxWidth: .infinity).padding(.vertical, 60)
+            VStack(spacing: 12) { ProgressView(); Text("reading_device_status").foregroundStyle(.secondary) }.frame(maxWidth: .infinity).padding(.vertical, 60)
         }
     } else {
-        RequirementPlaceholder(icon: "cable.connector", title: "Connect tinyTouch with a USB data cable", description: "A USB data connection is required to use this feature.")
+        RequirementPlaceholder(icon: "cable.connector", title: "connect_tinytouch_data_cable", description: "usb_data_use_feature")
     }
 }
 

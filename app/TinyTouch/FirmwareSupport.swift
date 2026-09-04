@@ -39,7 +39,7 @@ struct SemanticVersion: Comparable, CustomStringConvertible, Equatable {
     }
 }
 
-enum FirmwareStrategy: String, Equatable { case ota = "OTA", factory = "Factory flash" }
+enum FirmwareStrategy: String, Equatable { case ota = "OTA", factory = "factory_flash_plain" }
 
 struct FirmwareChannelRelease: Codable, Equatable {
     let version: String
@@ -54,7 +54,7 @@ struct FirmwareChannel: Codable {
 
     static func decode(_ data: Data, appVersion: String) throws -> FirmwareChannelRelease {
         let channel = try JSONDecoder().decode(Self.self, from: data)
-        guard channel.schema == 1, !channel.releases.isEmpty else { throw FirmwareError.invalid("Unsupported or empty firmware channel.") }
+        guard channel.schema == 1, !channel.releases.isEmpty else { throw FirmwareError.invalid("unsupported_empty_firmware_channel") }
         let app = try SemanticVersion(appVersion, normalizeAppVersion: true)
         var versions = Set<String>(), compatible: [(SemanticVersion, FirmwareChannelRelease)] = []
         for release in channel.releases {
@@ -62,11 +62,11 @@ struct FirmwareChannel: Codable {
             let minimum = try SemanticVersion(release.minAppVersion)
             let maximum = try SemanticVersion(release.maxAppVersionExclusive)
             guard minimum < maximum else { throw FirmwareError.invalid("Invalid app compatibility range for \(release.version).") }
-            guard release.manifest.scheme == "https", release.manifest.host != nil else { throw FirmwareError.invalid("Firmware manifest URL must use HTTPS.") }
+            guard release.manifest.scheme == "https", release.manifest.host != nil else { throw FirmwareError.invalid("firmware_manifest_use_https") }
             guard versions.insert(version.description).inserted else { throw FirmwareError.invalid("Duplicate firmware version \(release.version).") }
             if minimum <= app && app < maximum { compatible.append((version, release)) }
         }
-        guard let selected = compatible.max(by: { $0.0 < $1.0 })?.1 else { throw FirmwareError.invalid("No firmware release supports this app version.") }
+        guard let selected = compatible.max(by: { $0.0 < $1.0 })?.1 else { throw FirmwareError.invalid("no_firmware_app_version") }
         return selected
     }
 }
@@ -97,9 +97,9 @@ enum FirmwareError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalid(let message), .flashing(let message): message
-        case .checksum: "Downloaded firmware does not match its declared size and SHA-256."
-        case .noUpdate: "This device already has the latest compatible firmware."
-        case .manualReset: "Automatic bootloader entry failed. Hold BOOT, tap RESET (or reconnect USB), release BOOT, then choose Retry."
+        case .checksum: "firmware_checksum_mismatch"
+        case .noUpdate: "device_has_compatible_firmware"
+        case .manualReset: "automatic_bootloader_choose_retry"
         }
     }
 }
@@ -115,13 +115,13 @@ enum FirmwareSupport {
     static func update(channelData: Data, manifestData: Data, manifestURL: URL,
                        appVersion: String, identity: DeviceIdentity, status: DeviceStatus?) throws -> FirmwareUpdate {
         let release = try FirmwareChannel.decode(channelData, appVersion: appVersion)
-        guard release.manifest == manifestURL else { throw FirmwareError.invalid("Firmware manifest URL changed unexpectedly.") }
+        guard release.manifest == manifestURL else { throw FirmwareError.invalid("firmware_manifest_changed_unexpectedly") }
         let manifest = try JSONDecoder().decode(FirmwareReleaseManifest.self, from: manifestData)
         let version = try SemanticVersion(release.version)
         guard manifest.productID == DeviceStatus.productID,
               manifest.version == release.version, manifest.firmware.factory.version == release.version,
-              manifest.protocolVersion == 6 else { throw FirmwareError.invalid("Release manifest version or protocol is inconsistent.") }
-        guard !supportedBoards.isDisjoint(with: manifest.boards) else { throw FirmwareError.invalid("Release does not support a tinyTouch ESP32-S3 board.") }
+              manifest.protocolVersion == 6 else { throw FirmwareError.invalid("release_manifest_protocol_inconsistent") }
+        guard !supportedBoards.isDisjoint(with: manifest.boards) else { throw FirmwareError.invalid("release_not_s3_board") }
         if let current = status.flatMap({ try? SemanticVersion($0.firmwareVersion) }), version <= current { throw FirmwareError.noUpdate }
         let strategy = strategy(for: identity, status: status)
         let asset = strategy == .ota ? manifest.ota : manifest.firmware.factory.fullImage
@@ -130,14 +130,14 @@ enum FirmwareSupport {
               !asset.file.isEmpty, !asset.file.contains("/"),
               let url = URL(string: asset.file, relativeTo: manifestURL)?.absoluteURL,
               url.scheme == "https", url.host == manifestURL.host else {
-            throw FirmwareError.invalid("Firmware asset metadata is unsafe.")
+            throw FirmwareError.invalid("firmware_asset_metadata_unsafe")
         }
         return FirmwareUpdate(version: version, strategy: strategy, manifestURL: manifestURL, asset: asset)
     }
 
     static func verifiedDownload(_ update: FirmwareUpdate, session: URLSession = .shared) async throws -> Data {
         let (data, response) = try await session.data(from: update.assetURL)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw FirmwareError.invalid("Firmware server returned an error.") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw FirmwareError.invalid("firmware_server_returned_error") }
         try verify(data, asset: update.asset)
         return data
     }
@@ -163,7 +163,7 @@ enum FirmwareSupport {
             await progress(Double(offset) / Double(image.count))
         }
         guard try await command("OTA COMMIT \(token)", 15).contains(where: { $0.hasPrefix("OK OTA STAGED") && $0.contains("power_cycle=required") }) else {
-            throw FirmwareError.invalid("Device did not confirm the staged OTA image.")
+            throw FirmwareError.invalid("device_not_ota_image")
         }
     }
 
@@ -172,7 +172,7 @@ enum FirmwareSupport {
             if let field = line.split(separator: " ").first(where: { $0.hasPrefix("next=") }),
                let value = Int(field.dropFirst(5)) { return value }
         }
-        throw FirmwareError.invalid("Device returned an invalid OTA offset.")
+        throw FirmwareError.invalid("device_returned_ota_offset")
     }
 }
 

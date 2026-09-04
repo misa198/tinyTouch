@@ -28,12 +28,12 @@ struct FingerprintPrompt: Equatable {
 struct FirmwareViewState: Equatable {
     enum Phase: Equatable { case idle, checking, ready, downloading, writing, reconnect, complete, failed }
     var phase: Phase = .idle
-    var target = "No device selected"
-    var current = "Unknown"
-    var latest = "Unknown"
+    var target = "no_device_selected"
+    var current = "common_unknown"
+    var latest = "common_unknown"
     var strategy: FirmwareStrategy?
     var progress = 0.0
-    var message = "Check for a compatible firmware release."
+    var message = "check_compatible_firmware_release"
     var error: String?
     var needsManualBoot = false
 }
@@ -58,6 +58,7 @@ final class AppState: ObservableObject {
     @Published private(set) var advancedFirmwareDevices = false
     @Published private(set) var firmware = FirmwareViewState()
     @Published private(set) var showFlashOnboarding = false
+    @Published private(set) var language = AppLanguage.saved
 
     private let manager = DeviceManager(), defaults = UserDefaults.standard
     private var window: NSWindow?, windowCloseObserver: NSObjectProtocol?, knownOpened: Set<String> = []
@@ -79,10 +80,10 @@ final class AppState: ObservableObject {
         devices.isEmpty || devices.contains { $0.status == nil || $0.status?.mode == SetupMode.hid.rawValue }
     }
     var summary: String {
-        if let error = devices.first(where: { $0.connection == .error }) { return "Error — \(error.name)" }
+        if let error = devices.first(where: { $0.connection == .error }) { return L10n.text("error_device", error.name) }
         let ready = devices.filter { $0.connection == .ready }.count
-        if ready > 0 { return ready == 1 ? "HID ready" : "HID ready on \(ready) devices" }
-        return devices.isEmpty ? "No tinyTouch connected" : "tinyTouch connected"
+        if ready > 0 { return ready == 1 ? L10n.text("hid_ready") : L10n.text("hid_ready_devices", ready) }
+        return L10n.text(devices.isEmpty ? "no_tinytouch_connected" : "tinytouch_connected")
     }
     var menuIcon: String {
         if devices.contains(where: { $0.connection == .error }) { return "exclamationmark.triangle.fill" }
@@ -145,7 +146,7 @@ final class AppState: ObservableObject {
         guard !isFirmwareWriting else { return }
         backgroundEnabled = enabled; defaults.set(enabled, forKey: "backgroundEnabled")
         manager.setEnabled(enabled && !legacyHelperDetected)
-        setAppMessage(enabled ? "HID service enabled." : "HID service paused.")
+        setAppMessage(enabled ? "hid_service_enabled" : "hid_service_paused_notice")
     }
     func setLaunchAtLogin(_ enabled: Bool) {
         do {
@@ -156,6 +157,10 @@ final class AppState: ObservableObject {
     func setAdvancedFirmwareDevices(_ enabled: Bool) {
         guard !isFirmwareWriting else { return }
         advancedFirmwareDevices = enabled; manager.setAdvancedDiscovery(enabled)
+    }
+    func setLanguage(_ language: AppLanguage) {
+        defaults.set(language.rawValue, forKey: AppLanguage.preferenceKey)
+        self.language = language
     }
 
     func setFingerprintsVisible(_ visible: Bool) {
@@ -177,7 +182,7 @@ final class AppState: ObservableObject {
         guard !busy, let device = selectedDevice else { return }
         busy = true; firmwareUpdate = nil; firmwareImageURL = nil
         firmware = FirmwareViewState(phase: .checking, target: device.name,
-            current: device.status?.firmwareVersion ?? "ROM mode", message: "Checking the reviewed firmware channel…")
+            current: device.status?.firmwareVersion ?? "rom_mode", message: "checking_reviewed_firmware_channel")
         Task {
             defer { busy = false }
             do {
@@ -192,11 +197,11 @@ final class AppState: ObservableObject {
                 firmwareUpdate = update
                 firmware.phase = .ready; firmware.latest = update.version.description
                 firmware.strategy = update.strategy; firmware.message = update.strategy == .ota
-                    ? "OTA preserves fingerprints, keys, hosts, and settings."
-                    : "Factory flash resets all device data. The image is written only after confirmation."
+                    ? "ota_preserves_hosts_settings"
+                    : "factory_flash_written_confirmation"
             } catch FirmwareError.noUpdate {
-                firmware.phase = .complete; firmware.message = "tinyTouch already has the latest compatible firmware."
-            } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Firmware check failed." }
+                firmware.phase = .complete; firmware.message = "tinytouch_has_compatible_firmware"
+            } catch { firmware.phase = .failed; firmware.error = L10n.error(error); firmware.message = "firmware_check_failed" }
         }
     }
 
@@ -204,13 +209,13 @@ final class AppState: ObservableObject {
         guard !busy, let update = firmwareUpdate, let device = selectedDevice else { return }
         pendingOTAVerification = nil
         busy = true; firmware.phase = .downloading; firmware.progress = 0; firmware.error = nil
-        firmware.message = "Downloading and verifying firmware…"
+        firmware.message = "downloading_verifying_firmware"
         Task {
             do {
                 let image = try await FirmwareSupport.verifiedDownload(update)
-                guard selectedDevice?.id == device.id else { throw FirmwareError.invalid("Selected device changed before flashing.") }
+                guard selectedDevice?.id == device.id else { throw FirmwareError.invalid("selected_device_changed_flashing") }
                 if update.strategy == .ota {
-                    firmware.phase = .writing; firmware.message = "Writing the inactive OTA slot…"
+                    firmware.phase = .writing; firmware.message = "writing_inactive_ota_slot"
                     try await FirmwareSupport.ota(image: image, digest: update.asset.sha256,
                         command: { [manager, weak self] command, timeout in
                             defer { if command == "AUTH" { self?.clearFingerprintPrompt(deviceID: device.id) } }
@@ -218,16 +223,16 @@ final class AppState: ObservableObject {
                         }, progress: { [weak self] value in self?.firmware.progress = value })
                     pendingOTAVerification = (device.id, device.identity.locationID, update.version.description)
                     firmware.phase = .reconnect; firmware.progress = 1
-                    firmware.message = "OTA is staged. Unplug tinyTouch and reconnect it to boot the new firmware."
+                    firmware.message = "ota_staged_new_firmware"
                 } else {
                     let url = FileManager.default.temporaryDirectory.appendingPathComponent("tinytouch-\(UUID().uuidString).bin")
                     try image.write(to: url, options: [.atomic]); firmwareImageURL = url
                     try await flashFactory(device: device, imageURL: url, manualBoot: false)
                 }
             } catch {
-                firmware.phase = .failed; firmware.error = error.localizedDescription
+                firmware.phase = .failed; firmware.error = L10n.error(error)
                 if let value = error as? FirmwareError, case .manualReset = value { firmware.needsManualBoot = true }
-                firmware.message = "Firmware installation stopped safely."
+                firmware.message = "firmware_installation_stopped_safely"
             }
             busy = false
         }
@@ -235,13 +240,13 @@ final class AppState: ObservableObject {
 
     func flashNewBoard() {
         guard !busy, let device = selectedDevice, device.identity.kind == .rom else {
-            firmware = FirmwareViewState(phase: .failed, message: "Connect an ESP32-S3 in download mode first.", error: "No board in download mode is selected.")
+            firmware = FirmwareViewState(phase: .failed, message: "connect_esp32_mode_first", error: "no_board_mode_selected")
             return
         }
         busy = true; newBoardFlashActive = true; newBoardFactoryResetting = false; showFlashOnboarding = true
         firmwareUpdate = nil; firmwareImageURL = nil
-        firmware = FirmwareViewState(phase: .checking, target: device.name, current: "ROM mode",
-            message: "Fetching the reviewed firmware…")
+        firmware = FirmwareViewState(phase: .checking, target: device.name, current: "rom_mode",
+            message: "fetching_reviewed_firmware")
         Task {
             do {
                 let channelData = try await Self.download(FirmwareSupport.channelURL)
@@ -253,16 +258,16 @@ final class AppState: ObservableObject {
                     appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
                     identity: device.identity, status: nil)
                 firmwareUpdate = update; firmware.latest = update.version.description; firmware.strategy = update.strategy
-                firmware.phase = .downloading; firmware.message = "Downloading and verifying firmware…"
+                firmware.phase = .downloading; firmware.message = "downloading_verifying_firmware"
                 let image = try await FirmwareSupport.verifiedDownload(update)
-                guard selectedDevice?.id == device.id else { throw FirmwareError.invalid("Selected board changed before flashing.") }
+                guard selectedDevice?.id == device.id else { throw FirmwareError.invalid("selected_board_changed_flashing") }
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("tinytouch-\(UUID().uuidString).bin")
                 try image.write(to: url, options: [.atomic]); firmwareImageURL = url
                 try await flashFactory(device: device, imageURL: url, manualBoot: false)
             } catch {
-                firmware.phase = .failed; firmware.error = error.localizedDescription
+                firmware.phase = .failed; firmware.error = L10n.error(error)
                 if let value = error as? FirmwareError, case .manualReset = value { firmware.needsManualBoot = true }
-                firmware.message = "Flash stopped safely."
+                firmware.message = "flash_stopped_safely"
             }
             busy = false
         }
@@ -273,22 +278,22 @@ final class AppState: ObservableObject {
         busy = true; firmware.error = nil; firmware.needsManualBoot = false
         Task {
             do { try await flashFactory(device: device, imageURL: imageURL, manualBoot: true) }
-            catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Factory flash failed." }
+            catch { firmware.phase = .failed; firmware.error = L10n.error(error); firmware.message = "factory_flash_failed" }
             busy = false
         }
     }
 
     func retryNewBoardFactoryReset() {
         guard !busy, canRetryNewBoardFactoryReset, let id = selectedID else { return }
-        busy = true; firmware.error = nil; firmware.message = "Checking tinyTouch before retrying factory reset…"
+        busy = true; firmware.error = nil; firmware.message = "checking_tinytouch_factory_reset"
         Task {
             do {
                 manager.reconnect(id)
                 let status = try await waitForStatus(id: id)
                 busy = false; resetNewBoard(id: id, status: status)
             } catch {
-                firmware.phase = .failed; firmware.error = error.localizedDescription
-                firmware.message = "Factory reset stopped safely."; busy = false
+                firmware.phase = .failed; firmware.error = L10n.error(error)
+                firmware.message = "factory_reset_stopped_safely"; busy = false
             }
         }
     }
@@ -297,7 +302,7 @@ final class AppState: ObservableObject {
         guard let identity = manager.acquireExclusive(device.id) else { throw DeviceError.disconnected }
         defer { manager.releaseExclusive(device.id) }
         let newBoardFlash = newBoardFlashActive
-        firmware.phase = .writing; firmware.message = manualBoot ? "Connecting to the manually selected ROM bootloader…" : "Entering the bootloader and writing the factory image…"
+        firmware.phase = .writing; firmware.message = manualBoot ? "connecting_manually_rom_bootloader" : "entering_bootloader_factory_image"
         try await FirmwareFlasher.flash(port: identity.port, imageURL: imageURL, manualBoot: manualBoot) { [weak self] value in
             self?.firmware.progress = value
         }
@@ -308,13 +313,13 @@ final class AppState: ObservableObject {
         if !newBoardFlash { pendingFactoryVerification = (device.id, identity.locationID) }
         firmware.phase = .reconnect; firmware.progress = 1
         firmware.message = newBoardFlash
-            ? "Firmware is installed. Unplug tinyTouch, then plug it back in to continue setup."
-            : "Factory image verified. Reconnect tinyTouch normally to finish factory-default verification."
+            ? "firmware_installed_continue_setup"
+            : "factory_image_default_verification"
     }
 
     private static func download(_ url: URL) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(from: url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw FirmwareError.invalid("Firmware server returned an error.") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw FirmwareError.invalid("firmware_server_returned_error") }
         return data
     }
     func completeOnboarding(launchAtLogin: Bool, replaceLegacy: Bool) {
@@ -326,8 +331,8 @@ final class AppState: ObservableObject {
         guard !busy, var state = setup, state.phase == .chooseMode || state.error != nil else { return }
         do {
             if mode == .hid { try SetupValidation.password(password, confirmation: confirmation, mode: keyboardMode) }
-        } catch { state.error = error.localizedDescription; setup = state; return }
-        state.mode = mode; state.phase = .authenticate; state.message = "Authorizing device setup…"
+        } catch { state.error = L10n.error(error); setup = state; return }
+        state.mode = mode; state.phase = .authenticate; state.message = "authorizing_device_setup"
         state.error = nil; state.canSkipPairing = false; setup = state
         if mode == .hid { setupPassword = password }
         runSetup()
@@ -340,14 +345,14 @@ final class AppState: ObservableObject {
 
     func startOverSetup() {
         guard !busy, var state = setup else { return }
-        state.mode = nil; state.phase = .chooseMode; state.message = "Choose how you want to use tinyTouch."
+        state.mode = nil; state.phase = .chooseMode; state.message = "choose_how_use_tinytouch"
         state.error = nil; state.provisioningComplete = false; state.canSkipPairing = false; state.pairingStarted = false
         setupPassword = nil; setupKey = nil; setup = state
     }
 
     func skipPIVPairing() {
         guard var state = setup, state.mode == .piv, state.provisioningComplete, state.canSkipPairing else { return }
-        state.phase = .complete; state.message = "PIV is ready. macOS pairing was skipped."
+        state.phase = .complete; state.message = "piv_ready_pairing_skipped"
         state.error = nil; state.canSkipPairing = false; setup = state
     }
 
@@ -365,19 +370,19 @@ final class AppState: ObservableObject {
             }
             clearDeviceMessage(id); manager.retry(id); return
         }
-        perform(deviceID: id) { [self] in try await readStatus(id: id); return "Status updated." }
+        perform(deviceID: id) { [self] in try await readStatus(id: id); return "status_updated" }
     }
 
     func setHIDSettings(typingDelayMS: Int, submitEnter: Bool, touchCooldownMS: Int) {
         guard let id = selectedID else { return }
         perform(deviceID: id) { [self] in
             guard (1...100).contains(typingDelayMS), (100...5000).contains(touchCooldownMS) else {
-                throw DeviceError.response("HID settings are outside the supported range.")
+                throw DeviceError.response("hid_settings_supported_range")
             }
             let current = try await status(id: id)
             guard current.protocolVersion == 6, current.mode == "hid",
                   current.typingDelayMS != nil, current.submitEnter != nil, current.touchCooldownMS != nil else {
-                throw DeviceError.response("Update this device to firmware that supports HID settings.")
+                throw DeviceError.response("update_device_supports_hid_settings")
             }
             try await unlock(id, dialect: current.dialect)
             for command in [
@@ -388,9 +393,9 @@ final class AppState: ObservableObject {
             let updated = try await readStatus(id: id)
             guard updated.typingDelayMS == typingDelayMS, updated.submitEnter == submitEnter,
                   updated.touchCooldownMS == touchCooldownMS else {
-                throw DeviceError.response("The device did not confirm the new HID settings.")
+                throw DeviceError.response("device_not_hid_settings")
             }
-            return "HID settings saved."
+            return "hid_settings_saved"
         }
     }
 
@@ -399,15 +404,15 @@ final class AppState: ObservableObject {
         perform(deviceID: id) { [self] in
             let current = try await status(id: id)
             guard current.protocolVersion == 6, current.idleLEDOn != nil else {
-                throw DeviceError.response("Update this device to firmware that supports the idle LED setting.")
+                throw DeviceError.response("update_device_led_setting")
             }
             try await unlock(id, dialect: current.dialect)
             _ = try await manager.command(deviceID: id, "SET LED_IDLE \(enabled ? 1 : 0)")
             let updated = try await readStatus(id: id)
             guard updated.idleLEDOn == enabled else {
-                throw DeviceError.response("The device did not confirm the idle LED setting.")
+                throw DeviceError.response("device_not_led_setting")
             }
-            return "Idle LED setting saved."
+            return "idle_led_setting_saved"
         }
     }
 
@@ -416,10 +421,10 @@ final class AppState: ObservableObject {
         perform(deviceID: id) { [self] in
             let current = try await status(id: id)
             guard current.protocolVersion == 6 else {
-                throw DeviceError.response("Mode changes require protocol 6 firmware.")
+                throw DeviceError.response("mode_changes_6_firmware")
             }
-            guard current.sensorReady else { throw DeviceError.response("The fingerprint sensor is not responding.") }
-            guard current.mode != mode.rawValue else { return "tinyTouch is already in \(mode.rawValue.uppercased()) mode." }
+            guard current.sensorReady else { throw DeviceError.response("fingerprint_sensor_not_responding") }
+            guard current.mode != mode.rawValue else { return L10n.text("tinytouch_mode", mode.rawValue.uppercased()) }
 
             var provisioned = current.isProvisioned(mode: mode)
             if provisioned && mode == .hid {
@@ -430,31 +435,31 @@ final class AppState: ObservableObject {
             }
             if !provisioned {
                 setup = DeviceSetupState(deviceID: id, deviceName: device.name, mode: mode,
-                                         message: "Complete \(mode.rawValue.uppercased()) setup to switch modes.")
+                                         message: L10n.text("complete_setup_switch_modes", mode.rawValue.uppercased()))
                 return nil
             }
 
             try await unlock(id, dialect: current.dialect)
             guard let command = current.dialect.setMode(mode) else {
-                throw DeviceError.response("Mode changes require protocol 6 firmware.")
+                throw DeviceError.response("mode_changes_6_firmware")
             }
             _ = try await manager.command(deviceID: id, command)
             _ = try await waitForStatus(id: id, mode: mode)
             _ = try await readStatus(id: id)
             if mode == .hid { manager.markReady(id) }
-            return "Switched tinyTouch to \(mode.rawValue.uppercased()) mode. Existing PIV and HID data was preserved."
+            return L10n.text("switched_tinytouch_data_preserved", mode.rawValue.uppercased())
         }
     }
 
     func configureHID(password: String, confirmation: String, enroll: Bool) {
-        guard !password.isEmpty else { failSelected(DeviceError.response("Password cannot be empty.")); return }
-        guard password == confirmation else { failSelected(DeviceError.response("Passwords do not match.")); return }
+        guard !password.isEmpty else { failSelected(DeviceError.response("password_cannot_empty")); return }
+        guard password == confirmation else { failSelected(DeviceError.response("passwords_not_match")); return }
         guard let id = selectedID else { return }
         perform(deviceID: id) { [self] in
             var status = try await status(id: id)
             guard status.isCompatible else { throw DeviceError.unsupportedProtocol(status.protocolVersion) }
-            guard status.mode == "hid" else { throw DeviceError.response("Switch tinyTouch to HID mode outside this app, then try again.") }
-            guard status.sensorReady else { throw DeviceError.response("The fingerprint sensor is not responding.") }
+            guard status.mode == "hid" else { throw DeviceError.response("switch_tinytouch_try_again") }
+            guard status.sensorReady else { throw DeviceError.response("fingerprint_sensor_not_responding") }
             let mode = KeyboardSettingsStore().load(deviceID: id).keyboardLayout
             _ = try KeyboardMapper.translate(Data(password.utf8), mode: mode)
             try await unlock(id, dialect: status.dialect)
@@ -465,13 +470,13 @@ final class AppState: ObservableObject {
                 let hosts = try await hostList(id), keyID = try await keyID(key)
                 if !hosts.ids.contains(keyID) {
                     guard hosts.capacity == 0 || hosts.ids.count < hosts.capacity else {
-                        throw DeviceError.response("The device already trusts its maximum number of HID computers.")
+                        throw DeviceError.response("device_trusts_hid_computers")
                     }
                     _ = try await manager.command(deviceID: id, status.dialect.hostAdd(id: keyID, key: key.hex))
                 }
             } else {
                 if status.hidKeyConfigured && existingKey == nil {
-                    throw DeviceError.response("Legacy single-computer HID is paired to another Mac. Update firmware before adding this Mac.")
+                    throw DeviceError.response("legacy_single_adding_mac")
                 }
                 if !status.hidKeyConfigured { _ = try await manager.command(deviceID: id, "HID_KEY \(key.hex)") }
             }
@@ -482,13 +487,13 @@ final class AppState: ObservableObject {
                 }
             }
             status = try await readStatus(id: id)
-            return "HID is ready. Your credentials were saved to Keychain after device confirmation."
+            return "hid_ready_device_confirmation"
         }
     }
 
-    func enroll(slot: Int) { mutateFingerprint({ $0.enroll(slot: slot) }, success: "Fingerprint enrolled in slot \(slot).", timeout: 50) }
-    func deleteFingerprint(slot: Int) { mutateFingerprint({ $0.delete(slot: slot) }, success: "Fingerprint slot \(slot) deleted.") }
-    func deleteAllFingerprints() { mutateFingerprint({ $0.clear }, success: "All fingerprints deleted.") }
+    func enroll(slot: Int) { mutateFingerprint({ $0.enroll(slot: slot) }, success: L10n.text("fingerprint_enrolled_slot", slot), timeout: 50) }
+    func deleteFingerprint(slot: Int) { mutateFingerprint({ $0.delete(slot: slot) }, success: L10n.text("fingerprint_slot_deleted", slot)) }
+    func deleteAllFingerprints() { mutateFingerprint({ $0.clear }, success: "fingerprints_deleted") }
     func factoryReset() {
         guard !busy, let id = selectedID else { return }
         busy = true; setAppMessage(nil)
@@ -497,29 +502,29 @@ final class AppState: ObservableObject {
             do {
                 let current = try await self.status(id: id)
                 guard let command = current.dialect.factoryReset else {
-                    throw DeviceError.response("Factory reset requires protocol 6 firmware.")
+                    throw DeviceError.response("factory_reset_6_firmware")
                 }
                 guard current.sensorReady else {
-                    throw DeviceError.response("The fingerprint sensor must be available to erase its templates.")
+                    throw DeviceError.response("fingerprint_sensor_erase_templates")
                 }
                 try await unlock(id, dialect: current.dialect)
                 _ = try await manager.command(deviceID: id, command, timeout: 15)
                 do {
                     guard try await status(id: id).isFactoryDefault else {
-                        throw DeviceError.response("Factory reset verification failed; local data was preserved.")
+                        throw DeviceError.response("factory_reset_data_preserved")
                     }
                     try await deleteLocalData(id)
                 } catch {
                     manager.reconnect(id); throw error
                 }
                 manager.reconnect(id)
-                setAppMessage("Factory reset completed. Device and local credentials were erased.")
+                setAppMessage("factory_reset_credentials_erased")
             } catch { failApp(error) }
         }
     }
     func refreshComputers() {
         guard let id = selectedID else { return }
-        perform(deviceID: id) { [self] in try await readComputers(id: id); return "Computer list updated." }
+        perform(deviceID: id) { [self] in try await readComputers(id: id); return "computer_list_updated" }
     }
     func addCurrentMac() {
         guard let id = selectedID else { return }
@@ -527,15 +532,15 @@ final class AppState: ObservableObject {
             guard let key = try await pairingKey(id), try await hasPassword(id) else { throw DeviceError.missingCredentials }
             let status = try await status(id: id)
             guard status.isCompatible, status.protocolVersion >= 2 else {
-                throw DeviceError.response("This firmware supports only one HID computer.")
+                throw DeviceError.response("firmware_supports_hid_computer")
             }
             try await unlock(id, dialect: status.dialect)
             let hosts = try await hostList(id, dialect: status.dialect), keyID = try await keyID(key)
             if !hosts.ids.contains(keyID) {
-                guard hosts.capacity == 0 || hosts.ids.count < hosts.capacity else { throw DeviceError.response("The HID computer list is full.") }
+                guard hosts.capacity == 0 || hosts.ids.count < hosts.capacity else { throw DeviceError.response("hid_list_full_error") }
                 _ = try await manager.command(deviceID: id, status.dialect.hostAdd(id: keyID, key: key.hex))
             }
-            try await readComputers(id: id); return "This Mac is trusted for HID."
+            try await readComputers(id: id); return "mac_trusted_hid"
         }
     }
     func removeComputer(id hostID: String) {
@@ -544,7 +549,7 @@ final class AppState: ObservableObject {
             let status = try await status(id: deviceID)
             try await unlock(deviceID, dialect: status.dialect)
             _ = try await manager.command(deviceID: deviceID, status.dialect.hostRemove(id: hostID.lowercased()))
-            try await readComputers(id: deviceID); return "Computer removed."
+            try await readComputers(id: deviceID); return "computer_removed"
         }
     }
 
@@ -552,7 +557,7 @@ final class AppState: ObservableObject {
         guard !isFirmwareWriting, let id = selectedID else { return }
         do {
             try KeyboardSettingsStore().save(KeyboardSettings(keyboardLayout: mode), deviceID: id)
-            keyboardMode = mode; setAppMessage("Keyboard layout saved for \(id).")
+            keyboardMode = mode; setAppMessage(L10n.text("keyboard_layout_saved", id))
         } catch { failApp(error) }
     }
 
@@ -564,13 +569,13 @@ final class AppState: ObservableObject {
                 "background_enabled": String(backgroundEnabled), "launch_at_login": String(launchAtLogin),
                 "device_count": String(devices.count), "legacy_helper_detected": String(legacyHelperDetected),
             ])
-            setAppMessage("Diagnostics exported.")
+            setAppMessage("diagnostics_exported")
         } catch { failApp(error) }
     }
 
     func replaceLegacyHelper() {
         guard !busy else { return }
-        busy = true; manager.setEnabled(false); setAppMessage("Waiting for the legacy helper to release tinyTouch…")
+        busy = true; manager.setEnabled(false); setAppMessage("waiting_legacy_release_tinytouch")
         let plist = legacyPlist, ports = SerialDiscovery.devices().map(\.port)
         Task {
             let remaining = await Task.detached { () -> [PortOwner] in
@@ -586,11 +591,11 @@ final class AppState: ObservableObject {
                 do {
                     if FileManager.default.fileExists(atPath: plist.path) { try FileManager.default.removeItem(at: plist) }
                     legacyHelperDetected = false; manager.setEnabled(backgroundEnabled)
-                    setAppMessage("Legacy helper removed. Keychain credentials and replay state were preserved.")
+                    setAppMessage("legacy_helper_state_preserved")
                 } catch { failApp(error) }
             } else {
                 legacyHelperDetected = true
-                failApp(DeviceError.response("Serial port is still held by \(remaining.map(\.detail).joined(separator: "; ")). Close it, then choose Replace again."))
+                failApp(DeviceError.response(L10n.text("serial_port_replace_again", remaining.map(\.detail).joined(separator: "; "))))
             }
             busy = false
         }
@@ -609,7 +614,7 @@ final class AppState: ObservableObject {
             device.identity = identity
             device.connection = errors[identity.id] != nil || device.status?.isCompatible == false
                 ? .error : (ready.contains(identity.id) ? .ready : .connected)
-            if let error = errors[identity.id] { device.message = error.localizedDescription; device.isError = true }
+            if let error = errors[identity.id] { device.message = L10n.error(error); device.isError = true }
             else if newlyOpened.contains(identity.id), device.connection != .error { device.message = nil; device.isError = false }
             return device
         }
@@ -622,10 +627,10 @@ final class AppState: ObservableObject {
             Task {
                 do {
                     let current = try await status(id: runtime.id)
-                    guard current.isFactoryDefault else { throw FirmwareError.invalid("Flashed device did not return in factory-default state; local credentials were preserved.") }
+                    guard current.isFactoryDefault else { throw FirmwareError.invalid("flashed_device_credentials_preserved") }
                     try await deleteLocalData(pending.id)
-                    firmware.phase = .complete; firmware.message = "Factory flash verified. Device data and matching local credentials were reset."
-                } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Post-flash verification failed." }
+                    firmware.phase = .complete; firmware.message = "factory_flash_credentials_reset"
+                } catch { firmware.phase = .failed; firmware.error = L10n.error(error); firmware.message = "post_flash_verification_failed" }
             }
         }
         if let pending = pendingOTAVerification,
@@ -637,11 +642,11 @@ final class AppState: ObservableObject {
                 do {
                     let current = try await status(id: runtime.id)
                     guard current.firmwareVersion == pending.version else {
-                        throw FirmwareError.invalid("Device restarted with firmware \(current.firmwareVersion), expected \(pending.version).")
+                        throw FirmwareError.invalid(L10n.text("device_restarted_firmware_expected", current.firmwareVersion, pending.version))
                     }
                     firmware.phase = .complete; firmware.current = current.firmwareVersion
-                    firmware.message = "Firmware update verified."
-                } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Post-update verification failed." }
+                    firmware.message = "firmware_update_verified"
+                } catch { firmware.phase = .failed; firmware.error = L10n.error(error); firmware.message = "post_update_verification_failed" }
             }
         }
         if let rom = identities.first(where: { $0.kind == .rom }) { selectedID = rom.id }
@@ -697,43 +702,43 @@ final class AppState: ObservableObject {
     private func resetNewBoard(id: String, status: DeviceStatus) {
         guard !newBoardFactoryResetting else { return }
         newBoardFactoryResetting = true; busy = true
-        firmware.message = "Resetting tinyTouch to factory defaults…"
+        firmware.message = "resetting_tinytouch_factory_defaults"
         Task {
             defer { newBoardFactoryResetting = false; busy = false }
             do {
                 guard let command = status.dialect.factoryReset else {
-                    throw DeviceError.response("Factory reset requires protocol 6 firmware.")
+                    throw DeviceError.response("factory_reset_6_firmware")
                 }
                 guard status.sensorReady else {
-                    throw DeviceError.response("The fingerprint sensor must be available to factory-reset tinyTouch.")
+                    throw DeviceError.response("fingerprint_sensor_reset_tinytouch")
                 }
                 try await unlock(id, dialect: status.dialect)
                 _ = try await manager.command(deviceID: id, command, timeout: 15)
                 let current = try await self.status(id: id)
                 guard current.isFactoryDefault else {
-                    throw DeviceError.response("Factory reset verification failed.")
+                    throw DeviceError.response("factory_reset_verification_failed")
                 }
                 newBoardFlashActive = false; newBoardFlashLocationID = nil; defaults.removeObject(forKey: "newBoardFlashLocationID"); showFlashOnboarding = false
                 beginSetupIfNeeded(current, id: id)
             } catch {
-                firmware.phase = .failed; firmware.error = error.localizedDescription
-                firmware.message = "Factory reset stopped safely."
+                firmware.phase = .failed; firmware.error = L10n.error(error)
+                firmware.message = "factory_reset_stopped_safely"
             }
         }
     }
 
     private func runSetup() {
         guard !busy, let state = setup, let mode = state.mode else { return }
-        busy = true; updateSetup(.authenticate, "Authorizing device setup…")
+        busy = true; updateSetup(.authenticate, "authorizing_device_setup")
         Task {
             do {
                 let id = state.deviceID
                 var current = try await status(id: id)
-                guard current.protocolVersion == 6 else { throw DeviceError.response("Setup requires protocol 6 firmware.") }
-                guard current.sensorReady else { throw DeviceError.response("The fingerprint sensor is not responding.") }
+                guard current.protocolVersion == 6 else { throw DeviceError.response("setup_requires_6_firmware") }
+                guard current.sensorReady else { throw DeviceError.response("fingerprint_sensor_not_responding") }
                 try await unlock(id, dialect: current.dialect)
                 if mode == .hid {
-                    updateSetup(.registerMac, "Registering this Mac securely…")
+                    updateSetup(.registerMac, "registering_mac_securely")
                     let storedKey = try await pairingKey(id)
                     let key: Data
                     if let setupKey { key = setupKey }
@@ -743,48 +748,48 @@ final class AppState: ObservableObject {
                     let hosts = try await hostList(id, dialect: current.dialect), hostID = try await keyID(key)
                     if !hosts.ids.contains(hostID) {
                         guard hosts.capacity == 0 || hosts.ids.count < hosts.capacity else {
-                            throw DeviceError.response("The device already trusts its maximum number of HID computers.")
+                            throw DeviceError.response("device_trusts_hid_computers")
                         }
                         _ = try await manager.command(deviceID: id, current.dialect.hostAdd(id: hostID, key: key.hex))
                     }
                     if let password = setupPassword {
                         try await saveCredentials(key: key, password: password, id: id); setupPassword = nil
                     } else if !(try await hasPassword(id)) {
-                        throw DeviceError.response("Enter the password again to resume setup.")
+                        throw DeviceError.response("enter_password_resume_setup")
                     }
                 }
                 if current.mode != mode.rawValue {
-                    updateSetup(.switchMode, "Switching tinyTouch to \(mode.rawValue.uppercased()) mode…")
-                    guard let command = current.dialect.setMode(mode) else { throw DeviceError.response("Mode changes require protocol 6 firmware.") }
+                    updateSetup(.switchMode, L10n.text("switching_tinytouch_mode", mode.rawValue.uppercased()))
+                    guard let command = current.dialect.setMode(mode) else { throw DeviceError.response("mode_changes_6_firmware") }
                     _ = try await manager.command(deviceID: id, command)
                     current = try await waitForStatus(id: id, mode: mode)
                 }
                 try await unlock(id, dialect: current.dialect)
                 if mode == .piv && current.fields["piv"] != "ready" {
-                    updateSetup(.createIdentity, "Creating the PIV identity…")
-                    guard let command = current.dialect.pivCreate else { throw DeviceError.response("PIV setup requires protocol 6 firmware.") }
+                    updateSetup(.createIdentity, "creating_piv_identity")
+                    guard let command = current.dialect.pivCreate else { throw DeviceError.response("piv_setup_6_firmware") }
                     _ = try await manager.command(deviceID: id, command, timeout: 90)
                     current = try await status(id: id)
-                    guard current.fields["piv"] == "ready" else { throw DeviceError.response("The PIV identity was not created.") }
+                    guard current.fields["piv"] == "ready" else { throw DeviceError.response("piv_identity_not_created") }
                 }
                 if current.fingerprintCount == 0 {
-                    updateSetup(.enroll, "Touch the sensor to enroll your fingerprint.")
+                    updateSetup(.enroll, "touch_sensor_enroll_fingerprint")
                     showPrompt("PROMPT TOUCH", deviceID: id)
                     defer { clearFingerprintPrompt(deviceID: id) }
                     _ = try await manager.command(deviceID: id, current.dialect.enroll(slot: 1), timeout: 50)
                 }
-                updateSetup(.verify, "Verifying setup…")
+                updateSetup(.verify, "verifying_setup")
                 current = try await readStatus(id: id)
-                guard current.isSetupComplete(mode: mode) else { throw DeviceError.response("Setup verification did not report an enrolled fingerprint and a ready \(mode.rawValue.uppercased()) configuration.") }
+                guard current.isSetupComplete(mode: mode) else { throw DeviceError.response(L10n.text("setup_verification_ready_configuration", mode.rawValue.uppercased())) }
                 if mode == .hid {
                     guard let key = try await pairingKey(id), try await hasPassword(id) else { throw DeviceError.missingCredentials }
                     let hosts = try await hostList(id, dialect: current.dialect)
-                    guard hosts.ids.contains(try await keyID(key)) else { throw DeviceError.response("This Mac was not found in the HID host list.") }
-                    manager.markReady(id); completeSetup("HID is ready with your fingerprint.")
+                    guard hosts.ids.contains(try await keyID(key)) else { throw DeviceError.response("mac_not_host_list") }
+                    manager.markReady(id); completeSetup("hid_ready_fingerprint")
                 } else {
                     if var setup {
                         setup.phase = .pair; setup.provisioningComplete = true; setup.canSkipPairing = true
-                        setup.message = "Unplug tinyTouch, plug it back in, then pair it with macOS."
+                        setup.message = "unplug_tinytouch_pair_macos"
                         self.setup = setup
                     }
                     busy = false; return
@@ -805,18 +810,18 @@ final class AppState: ObservableObject {
             }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
-        throw DeviceError.response(mode.map { "tinyTouch did not reconnect in \($0.rawValue.uppercased()) mode." } ?? "tinyTouch did not reconnect.")
+        throw DeviceError.response(mode.map { L10n.text("tinytouch_not_reconnect_mode", $0.rawValue.uppercased()) } ?? L10n.text("tinytouch_not_reconnect"))
     }
 
     func pairPIV() {
         guard !busy, setup?.mode == .piv else { return }
-        busy = true; updateSetup(.pair, "Opening macOS PIV pairing…")
+        busy = true; updateSetup(.pair, "opening_macos_piv_pairing")
         Task {
             let failure = await Task.detached { Self.runPIVPairing() }.value
             if let failure, var state = setup { state.recordPairingFailure(failure); setup = state }
             else if var state = setup {
                 state.pairingStarted = true
-                state.message = "When macOS asks for a PIN, touch tinyTouch; do not type the PIN manually."
+                state.message = "macos_asks_pin_manually"
                 setup = state
             }
             busy = false
@@ -829,13 +834,13 @@ final class AppState: ObservableObject {
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/sc_auth"); process.arguments = arguments
             process.standardOutput = output; process.standardError = error
             do { try process.run(); process.waitUntilExit() }
-            catch { return (-1, "", error.localizedDescription) }
+            catch { return (-1, "", L10n.error(error)) }
             return (process.terminationStatus,
                     String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
                     String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         let deadline = Date().addingTimeInterval(10)
-        var failure = "macOS did not discover the tinyTouch PIV identity. Unplug and reconnect tinyTouch, then choose Retry."
+        var failure = "macos_not_choose_retry"
         while Date() < deadline {
             let identities = run(["identities"])
             if let result = SCAuthResult.identities(exitCode: identities.0, output: identities.1, error: identities.2) {
@@ -850,7 +855,7 @@ final class AppState: ObservableObject {
 
     func confirmPIVPairing() {
         guard !busy, setup?.mode == .piv, setup?.pairingStarted == true else { return }
-        completeSetup("PIV is ready and paired with macOS.")
+        completeSetup("piv_ready_paired_macos")
     }
 
     private func updateSetup(_ phase: DeviceSetupPhase, _ message: String) {
@@ -862,11 +867,11 @@ final class AppState: ObservableObject {
     }
     private func failSetup(_ error: Error) {
         guard var state = setup else { return }
-        state.error = error.localizedDescription; setup = state
+        state.error = L10n.error(error); setup = state
     }
     private func status(id: String) async throws -> DeviceStatus {
         let lines = try await manager.command(deviceID: id, "STATUS")
-        guard let line = lines.last(where: { $0.hasPrefix("OK STATUS ") }) else { throw DeviceError.response("No STATUS response received.") }
+        guard let line = lines.last(where: { $0.hasPrefix("OK STATUS ") }) else { throw DeviceError.response("no_status_response_received") }
         let status = try DeviceStatus(line: line)
         guard status.fields["product_id"] == DeviceStatus.productID else { throw DeviceError.foreignFirmware }
         return status
@@ -877,7 +882,7 @@ final class AppState: ObservableObject {
         guard resolved != .unsupported else { throw DeviceError.unsupportedProtocol(deviceStatus?.protocolVersion ?? 0) }
         let lines = try await manager.command(deviceID: id, resolved.hostList)
         guard let line = lines.last(where: { $0.hasPrefix("OK HID_KEY_IDS ") || $0.hasPrefix("OK HOST LIST ") })
-        else { throw DeviceError.response("No computer list received.") }
+        else { throw DeviceError.response("no_computer_list_received") }
         return try HIDHostList(line: line)
     }
     private func readComputers(id: String, hosts supplied: HIDHostList? = nil) async throws {
@@ -913,9 +918,9 @@ final class AppState: ObservableObject {
         }
     }
     private func showPrompt(_ prompt: String, deviceID: String) {
-        let messages = ["PROMPT TOUCH": "Touch the fingerprint sensor now.", "PROMPT LIFT": "Lift your finger.",
-                        "PROMPT TOUCH_AGAIN": "Touch the sensor with the same finger again.",
-                        "EVENT TOUCH": "Touch the fingerprint sensor now."]
+        let messages = ["PROMPT TOUCH": "touch_fingerprint_sensor_now", "PROMPT LIFT": "lift_finger",
+                        "PROMPT TOUCH_AGAIN": "touch_sensor_finger_again",
+                        "EVENT TOUCH": "touch_fingerprint_sensor_now"]
         let message = messages[prompt] ?? prompt.replacingOccurrences(of: "PROMPT ", with: "")
         fingerprintPrompt = FingerprintPrompt(deviceID: deviceID, message: message)
         setMessage(message, deviceID: deviceID)
@@ -930,17 +935,17 @@ final class AppState: ObservableObject {
     }
     private func fail(_ error: Error, deviceID: String) {
         guard let index = devices.firstIndex(where: { $0.id == deviceID }) else { return }
-        devices[index].message = error.localizedDescription; devices[index].isError = true
+        devices[index].message = L10n.error(error); devices[index].isError = true
     }
     private func failSelected(_ error: Error) { if let id = selectedID { fail(error, deviceID: id) } }
     private func setAppMessage(_ value: String?) { appMessage = value; appMessageIsError = false }
-    private func failApp(_ error: Error) { appMessage = error.localizedDescription; appMessageIsError = true }
+    private func failApp(_ error: Error) { appMessage = L10n.error(error); appMessageIsError = true }
 
     private func randomKeyOffMain() async throws -> Data {
         try await Task.detached {
             var data = Data(count: 32); let count = data.count
             let status = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
-            guard status == errSecSuccess else { throw DeviceError.response("Could not create a secure pairing key (\(status)).") }
+            guard status == errSecSuccess else { throw DeviceError.response(L10n.text("not_create_pairing_key", status)) }
             return data
         }.value
     }
@@ -972,7 +977,7 @@ final class AppState: ObservableObject {
             attempt { try ReplayStateStore().remove(deviceID: id) }
             attempt { try KeyboardSettingsStore().remove(deviceID: id) }
             if let firstError {
-                throw DeviceError.response("The device was reset, but some local data could not be erased: \(firstError.localizedDescription)")
+                throw DeviceError.response(L10n.text("device_reset_not_erased", firstError.localizedDescription))
             }
         }.value
     }

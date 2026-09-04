@@ -15,66 +15,66 @@ struct SetupWizardView: View {
             VStack(spacing: 28) {
                 Image("TinyTouchIcon").resizable().scaledToFit().frame(width: 72, height: 72).shadow(color: .black.opacity(0.18), radius: 14, y: 6)
                 VStack(spacing: 6) {
-                    Text(title).font(.largeTitle.bold()); Text(setup.deviceName).font(.headline)
-                    Text(mode == .hid && setup.phase == .chooseMode ? "Enter the password tinyTouch should type after authentication." : setup.message).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Text(L10n.text(title)).font(.largeTitle.bold()); Text(L10n.text(setup.deviceName)).font(.headline)
+                    Text(L10n.text(mode == .hid && setup.phase == .chooseMode ? "enter_password_type_authentication" : setup.message)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
                 if setup.phase == .chooseMode {
-                    InformationDialog(title: "Fingerprint required",
-                                      message: "Fingerprint enrollment is required for both HID and PIV. Keep a finger ready before continuing.",
+                    InformationDialog(title: "fingerprint_required_title",
+                                      message: "fingerprint_enrollment_ready_continuing",
                                       icon: "touchid")
                 }
                 if setup.phase == .chooseMode { modePicker } else if setup.phase == .complete { completion } else { progress }
             }.padding(48).frame(maxWidth: 680).frame(maxWidth: .infinity).animation(.easeInOut(duration: 0.25), value: mode)
         }
     }
-    private var title: String { setup.phase == .complete ? "Setup Complete" : setup.phase == .chooseMode ? (mode == .hid ? "Set Up HID" : "Set Up tinyTouch") : "Setting Up tinyTouch" }
+    private var title: String { setup.phase == .complete ? "setup_complete" : setup.phase == .chooseMode ? (mode == .hid ? "set_hid" : "set_tinytouch") : "setting_tinytouch" }
     @ViewBuilder private var modePicker: some View { if mode == .hid { passwordForm.transition(.move(edge: .trailing).combined(with: .opacity)) } else { modeSelection.transition(.move(edge: .leading).combined(with: .opacity)) } }
     private var modeSelection: some View {
         VStack(spacing: 18) {
-            HStack(spacing: 16) { modeCard(.hid, icon: "keyboard", title: "HID", detail: "Type your password after a fingerprint match."); modeCard(.piv, icon: "person.text.rectangle", title: "PIV", detail: "Use tinyTouch as a macOS smart card.") }
-            if let error = setup.error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
-            Button("Continue") { guard let mode else { return }; app.startSetup(mode: mode, password: password, confirmation: confirmation) }.buttonStyle(.borderedProminent).disabled(mode == nil || app.busy)
+            HStack(spacing: 16) { modeCard(.hid, icon: "keyboard", title: "HID", detail: "type_password_fingerprint_match"); modeCard(.piv, icon: "person.text.rectangle", title: "PIV", detail: "use_tinytouch_smart_card") }
+            if let error = setup.error { Label(L10n.text(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
+            Button("common_continue") { guard let mode else { return }; app.startSetup(mode: mode, password: password, confirmation: confirmation) }.buttonStyle(.borderedProminent).disabled(mode == nil || app.busy)
         }
     }
     private var passwordForm: some View {
         VStack(spacing: 18) {
-            SecureField("Mac account password", text: $password).frame(maxWidth: 380); SecureField("Confirm password", text: $confirmation).frame(maxWidth: 380)
-            if !confirmation.isEmpty && password != confirmation { Label("Passwords do not match.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
-            Text("Maximum 160 UTF-8 bytes. Your current keyboard mapping must support every character.").font(.caption).foregroundStyle(.secondary)
-            if let error = setup.error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
-            HStack { Button("Back") { mode = nil; password = ""; confirmation = "" }; Button("Continue") { app.startSetup(mode: .hid, password: password, confirmation: confirmation) }.buttonStyle(.borderedProminent).disabled(password.isEmpty || password != confirmation || app.busy) }
+            SecureField("mac_account_password", text: $password).frame(maxWidth: 380); SecureField("confirm_password", text: $confirmation).frame(maxWidth: 380)
+            if !confirmation.isEmpty && password != confirmation { Label("passwords_not_match", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
+            Text("maximum_160_support_character").font(.caption).foregroundStyle(.secondary)
+            if let error = setup.error { Label(L10n.text(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red) }
+            HStack { Button("common_back") { mode = nil; password = ""; confirmation = "" }; Button("common_continue") { app.startSetup(mode: .hid, password: password, confirmation: confirmation) }.buttonStyle(.borderedProminent).disabled(password.isEmpty || password != confirmation || app.busy) }
         }
     }
     private func modeCard(_ value: SetupMode, icon: String, title: String, detail: String) -> some View {
         Button { mode = value } label: {
-            VStack(spacing: 10) { Image(systemName: icon).font(.system(size: 34)); Text(title).font(.title2.bold()); Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+            VStack(spacing: 10) { Image(systemName: icon).font(.system(size: 34)); Text(L10n.text(title)).font(.title2.bold()); Text(L10n.text(detail)).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
                 .padding(20).frame(maxWidth: .infinity, minHeight: 150).background(mode == value ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous)).overlay(RoundedRectangle(cornerRadius: 18).stroke(mode == value ? Color.accentColor : .clear, lineWidth: 2))
-        }.buttonStyle(.plain).accessibilityLabel("\(title): \(detail)")
+        }.buttonStyle(.plain).accessibilityLabel(L10n.text("text", L10n.text(title), L10n.text(detail)))
     }
     private var progress: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(steps.enumerated()), id: \.element.0) { index, step in
                 let current = steps.firstIndex(where: { $0.0 == setup.phase }) ?? 0
-                Label(step.1, systemImage: setup.phase == .complete || index < current ? "checkmark.circle.fill" : index == current && setup.error != nil ? "exclamationmark.circle.fill" : index == current ? "circle.inset.filled" : "circle").foregroundStyle(index <= current ? Color.primary : Color.secondary)
+                Label(L10n.text(step.1), systemImage: setup.phase == .complete || index < current ? "checkmark.circle.fill" : index == current && setup.error != nil ? "exclamationmark.circle.fill" : index == current ? "circle.inset.filled" : "circle").foregroundStyle(index <= current ? Color.primary : Color.secondary)
             }
             if setup.phase == .pair && setup.provisioningComplete && setup.error == nil && !setup.pairingStarted {
-                InformationDialog(title: "Reconnect tinyTouch",
-                                  message: "Unplug tinyTouch, plug it back in, then continue. This lets macOS discover the new PIV identity.",
+                InformationDialog(title: "reconnect_tinytouch",
+                                  message: "unplug_tinytouch_piv_identity",
                                   icon: "cable.connector")
-                HStack { Button("I Reconnected — Pair with macOS") { app.pairPIV() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
+                HStack { Button("i_reconnected_pair_macos") { app.pairPIV() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("skip_pairing") { app.skipPIVPairing() }.disabled(app.busy) }
             } else if setup.phase == .pair && setup.provisioningComplete && setup.error == nil {
-                InformationDialog(title: "Finish pairing in macOS",
-                                  message: "At the PIN prompt, touch the tinyTouch sensor. It will enter the dummy PIN automatically.",
+                InformationDialog(title: "finish_pairing_macos",
+                                  message: "pin_prompt_pin_automatically",
                                   icon: "lock")
-                HStack { Button("I Finished Pairing") { app.confirmPIVPairing() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) }
+                HStack { Button("i_finished_pairing") { app.confirmPIVPairing() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("skip_pairing") { app.skipPIVPairing() }.disabled(app.busy) }
             } else if let error = setup.error {
-                Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).padding(.top, 8)
-                HStack { Button("Retry") { app.retrySetup() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("Start Over") { mode = nil; password = ""; confirmation = ""; app.startOverSetup() }.disabled(app.busy); if setup.canSkipPairing { Button("Skip Pairing") { app.skipPIVPairing() }.disabled(app.busy) } }
+                Label(L10n.text(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).padding(.top, 8)
+                HStack { Button("common_retry") { app.retrySetup() }.buttonStyle(.borderedProminent).disabled(app.busy); Button("start_over") { mode = nil; password = ""; confirmation = ""; app.startOverSetup() }.disabled(app.busy); if setup.canSkipPairing { Button("skip_pairing") { app.skipPIVPairing() }.disabled(app.busy) } }
             } else { ProgressView().padding(.top, 8) }
         }.frame(maxWidth: 480, alignment: .leading)
     }
-    private var steps: [(DeviceSetupPhase, String)] { var values: [(DeviceSetupPhase, String)] = [(.authenticate, "Authorize setup")]; if setup.mode == .hid { values += [(.registerMac, "Register this Mac"), (.switchMode, "Enable HID mode")] } else { values += [(.createIdentity, "Create PIV identity")] }; values += [(.enroll, "Enroll fingerprint"), (.verify, "Verify setup")]; if setup.mode == .piv { values += [(.pair, "Pair with macOS")] }; return values }
-    private var completion: some View { VStack(spacing: 18) { Label("\(setup.mode?.rawValue.uppercased() ?? "tinyTouch") configured", systemImage: "checkmark.seal.fill").font(.title2.bold()).foregroundStyle(.green); Text("Your fingerprint is enrolled. You can add more later.").foregroundStyle(.secondary); Button("Done") { app.finishSetup() }.buttonStyle(.borderedProminent) } }
+    private var steps: [(DeviceSetupPhase, String)] { var values: [(DeviceSetupPhase, String)] = [(.authenticate, "authorize_setup")]; if setup.mode == .hid { values += [(.registerMac, "register_mac"), (.switchMode, "enable_hid_mode")] } else { values += [(.createIdentity, "create_piv_identity")] }; values += [(.enroll, "enroll_fingerprint"), (.verify, "verify_setup")]; if setup.mode == .piv { values += [(.pair, "pair_macos")] }; return values }
+    private var completion: some View { VStack(spacing: 18) { Label(L10n.text("configured", setup.mode?.rawValue.uppercased() ?? "tinyTouch"), systemImage: "checkmark.seal.fill").font(.title2.bold()).foregroundStyle(.green); Text("fingerprint_enrolled_more_later").foregroundStyle(.secondary); Button("common_done") { app.finishSetup() }.buttonStyle(.borderedProminent) } }
 }
 
 struct OnboardingView: View {
@@ -85,13 +85,13 @@ struct OnboardingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Image("TinyTouchIcon").resizable().scaledToFit().frame(width: 82, height: 82).shadow(color: .black.opacity(0.22), radius: 18, y: 8)
-            Text("Welcome to TinyTouch").font(.largeTitle.bold())
-            Text("TinyTouch runs in the menu bar and serves authenticated HID password requests while your device is connected.").foregroundStyle(.secondary)
-            Toggle("Launch TinyTouch at login", isOn: $launchAtLogin)
-            if app.legacyHelperDetected { Toggle("Replace the legacy Python helper", isOn: $replaceLegacy); ForEach(app.legacyOwners) { Text($0.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }; Text("Keychain credentials and replay state will be preserved.").foregroundStyle(.secondary) }
-            Button("Continue") { app.completeOnboarding(launchAtLogin: launchAtLogin, replaceLegacy: replaceLegacy) }.buttonStyle(.borderedProminent)
-            Button("Flash a Blank Board") { flashBlankBoard() }
-            Text("Use this when tinyTouch has no working firmware. The app will open Firmware and detect an ESP32-S3 in ROM/download mode.").font(.caption).foregroundStyle(.secondary)
+            Text("welcome_tinytouch").font(.largeTitle.bold())
+            Text("tinytouch_runs_device_connected").foregroundStyle(.secondary)
+            Toggle("launch_tinytouch_login", isOn: $launchAtLogin)
+            if app.legacyHelperDetected { Toggle("replace_legacy_python_helper", isOn: $replaceLegacy); ForEach(app.legacyOwners) { Text($0.detail).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }; Text("keychain_credentials_state_preserved").foregroundStyle(.secondary) }
+            Button("common_continue") { app.completeOnboarding(launchAtLogin: launchAtLogin, replaceLegacy: replaceLegacy) }.buttonStyle(.borderedProminent)
+            Button("flash_blank_board") { flashBlankBoard() }
+            Text("use_tinytouch_download_mode").font(.caption).foregroundStyle(.secondary)
             AppMessageView()
         }.padding(48).frame(maxWidth: 620, alignment: .leading)
     }

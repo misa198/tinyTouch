@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "TinyTouchCore",
+    defaultLocalization: "en",
     platforms: [.macOS(.v13)],
     products: [.library(name: "TinyTouchCore", targets: ["TinyTouchCore"])],
     targets: [
@@ -26,8 +27,8 @@ let package = Package(
             name: "TinyTouchCore",
             dependencies: ["CSerialFlasher"],
             path: "TinyTouch",
-            exclude: ["AppState.swift", "ContentView.swift", "TinyTouchApp.swift", "TinyTouch-Bridging-Header.h", "Assets.xcassets", "Vendor"],
-            sources: ["HIDProtocol.swift", "DeviceServices.swift", "FirmwareSupport.swift"]
+            exclude: ["AppState.swift", "ContentView.swift", "DeviceManagementViews.swift", "FirmwareViews.swift", "SetupViews.swift", "SharedViews.swift", "TinyTouchApp.swift", "TinyTouch-Bridging-Header.h", "Assets.xcassets", "Vendor"],
+            sources: ["HIDProtocol.swift", "DeviceServices.swift", "FirmwareSupport.swift", "Localization.swift"]
         ),
         .testTarget(name: "TinyTouchCoreTests", dependencies: ["TinyTouchCore"], path: "TinyTouchTests")
     ]

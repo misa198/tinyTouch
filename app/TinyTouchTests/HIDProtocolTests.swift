@@ -107,8 +107,12 @@ final class HIDProtocolTests: XCTestCase {
     }
 
     func testProtocolSixDialectStatusAliasesAndUnknownVersion() throws {
-        XCTAssertEqual(DeviceStatus.label(for: "fingerprint_slots"), "Fingerprint slots")
-        XCTAssertEqual(DeviceStatus.label(for: "product_id"), "Product")
+        XCTAssertEqual(L10n.deviceValue("submit_enter", "1"), L10n.text("device_value_enabled"))
+        XCTAssertEqual(L10n.deviceValue("led_idle", "0"), L10n.text("device_value_disabled"))
+        XCTAssertEqual(L10n.deviceValue("idle"), L10n.text("device_value_idle"))
+        XCTAssertEqual(L10n.deviceValue("fingerprints", "1"), "1")
+        XCTAssertEqual(DeviceStatus.label(for: "fingerprint_slots"), "fingerprint_slots")
+        XCTAssertEqual(DeviceStatus.label(for: "product_id"), "product")
         XCTAssertEqual(DeviceStatus.label(for: "future_field"), "Future Field")
         XCTAssertEqual(DeviceDialect(protocolVersion: 1).unlock, "CONFIG_UNLOCK")
         XCTAssertEqual(DeviceDialect(protocolVersion: 5).enroll(slot: 2), "ENROLL 2")

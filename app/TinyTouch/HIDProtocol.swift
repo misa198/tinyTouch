@@ -9,11 +9,11 @@ enum HIDProtocolError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .malformedEvent: "The device sent a malformed HID event."
-        case .wrongKeyID: "The HID event belongs to another computer."
-        case .badMAC: "The HID event failed authentication."
-        case .replay: "A replayed HID event was rejected."
-        case .invalidKey: "The pairing key is invalid."
+        case .malformedEvent: "device_sent_hid_event"
+        case .wrongKeyID: "hid_event_another_computer"
+        case .badMAC: "hid_event_failed_authentication"
+        case .replay: "replayed_hid_event_rejected"
+        case .invalidKey: "pairing_key_invalid"
         case .password(let detail): detail
         case .crypto(let status): "AES-CTR failed (\(status))."
         }
@@ -67,7 +67,7 @@ struct HIDResponse: Equatable {
 enum KeyboardMode: String, Codable, CaseIterable, Identifiable {
     case auto, us
     var id: Self { self }
-    var title: String { self == .auto ? "Current keyboard layout" : "US keyboard" }
+    var title: String { self == .auto ? "keyboard_current_layout" : "keyboard_us_layout" }
 }
 
 struct KeyboardSettings: Codable, Equatable {
@@ -120,12 +120,12 @@ enum KeyboardMapper {
         switch mode {
         case .us:
             guard password.allSatisfy({ $0 < 0x80 }) else {
-                throw HIDProtocolError.password("The password contains a character unavailable to the US HID keyboard.")
+                throw HIDProtocolError.password("password_contains_hid_keyboard")
             }
             result = password
         case .auto:
             guard let text = String(data: password, encoding: .utf8) else {
-                throw HIDProtocolError.password("The password is not valid UTF-8.")
+                throw HIDProtocolError.password("password_not_utf8")
             }
             let map = try outputMap ?? currentOutputMap()
             var wire = ""
@@ -146,11 +146,11 @@ enum KeyboardMapper {
     static func currentOutputMap() throws -> [Character: Character] {
         guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
-            throw HIDProtocolError.password("macOS did not provide a usable keyboard layout.")
+            throw HIDProtocolError.password("macos_not_keyboard_layout")
         }
         let data = unsafeBitCast(raw, to: CFData.self)
         guard let bytes = CFDataGetBytePtr(data) else {
-            throw HIDProtocolError.password("The current keyboard layout has no Unicode key map.")
+            throw HIDProtocolError.password("current_keyboard_key_map")
         }
         let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
         var result: [Character: Character] = [:]

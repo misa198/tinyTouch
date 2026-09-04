@@ -15,10 +15,10 @@ struct TinyTouchApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent().environmentObject(app)
+            MenuContent().environmentObject(app).environment(\.locale, app.language.locale)
         } label: {
             Image(systemName: app.menuIcon)
-                .accessibilityLabel("tinyTouch: \(app.summary)")
+                .accessibilityLabel(L10n.text("tinytouch_detail", app.summary))
         }
         .menuBarExtraStyle(.menu)
     }
@@ -28,16 +28,16 @@ private struct MenuContent: View {
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        Button(app.summary) { app.showWindow() }.keyboardShortcut("o")
+        Button(L10n.text(app.summary)) { app.showWindow() }.keyboardShortcut("o")
         if app.showsHIDServiceControls {
-            Toggle("Enable HID Service", isOn: Binding(
+            Toggle("enable_hid_service", isOn: Binding(
                 get: { app.backgroundEnabled }, set: { app.setBackgroundEnabled($0) }
             )).disabled(app.isFirmwareWriting)
-            Toggle("Launch at Login", isOn: Binding(
+            Toggle("launch_login", isOn: Binding(
                 get: { app.launchAtLogin }, set: { app.setLaunchAtLogin($0) }
             ))
         }
         Divider()
-        Button("Quit") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q").disabled(app.isFirmwareWriting)
+        Button("common_quit") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q").disabled(app.isFirmwareWriting)
     }
 }

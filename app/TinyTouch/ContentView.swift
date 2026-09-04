@@ -6,7 +6,7 @@ struct ContentView: View {
     @State private var showMainUI = false
 
     enum Section: String, CaseIterable, Identifiable {
-        case overview = "Overview", setup = "HID Setup", fingerprints = "Fingerprints", computers = "Computers", firmware = "Firmware", settings = "Settings"
+        case overview = "nav_overview", setup = "nav_hid_setup", fingerprints = "nav_fingerprints", computers = "nav_computers", firmware = "nav_firmware", settings = "nav_settings"
         var id: Self { self }
         var icon: String {
             switch self {
@@ -34,7 +34,7 @@ struct ContentView: View {
             } else {
                 NavigationSplitView {
                     List(sections, selection: $section) {
-                        Label($0.rawValue, systemImage: $0.icon)
+                        Label(L10n.text($0.rawValue), systemImage: $0.icon)
                             .fontWeight(section == $0 ? .semibold : .regular)
                             .padding(.vertical, 6)
                             .tag($0)
@@ -58,7 +58,7 @@ struct ContentView: View {
                 }
             }
             if let prompt = app.fingerprintPrompt { FingerprintPromptView(message: prompt.message) }
-        }.frame(minWidth: 720, minHeight: 600)
+        }.environment(\.locale, app.language.locale).frame(minWidth: 720, minHeight: 600)
             .animation(.easeInOut(duration: 0.15), value: app.fingerprintPrompt)
             .onChange(of: app.selectedMode) { _ in if !sections.contains(section) { section = .overview } }
     }

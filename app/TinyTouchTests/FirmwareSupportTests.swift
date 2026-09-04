@@ -109,7 +109,7 @@ final class FirmwareSupportTests: XCTestCase {
     func testNewBoardResetFailureRetriesResetInsteadOfFlashing() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("TinyTouch/FirmwareViews.swift"))
-        XCTAssertTrue(source.contains("Button(\"Retry Factory Reset\") { app.retryNewBoardFactoryReset() }"))
+        XCTAssertTrue(source.contains("Button(\"retry_factory_reset\") { app.retryNewBoardFactoryReset() }"))
         let state = try String(contentsOf: root.appendingPathComponent("TinyTouch/AppState.swift"))
         XCTAssertTrue(state.contains("manager.reconnect(id)"))
         XCTAssertTrue(state.contains("let status = try await waitForStatus(id: id)"))

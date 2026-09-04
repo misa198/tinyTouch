@@ -36,19 +36,24 @@ struct DeviceIdentity: Identifiable, Hashable {
 struct DeviceStatus: Equatable {
     static let productID = "misa198.tinytouch.v1"
     private static let labels = [
-        "product_id": "Product", "protocol": "Protocol", "firmware": "Firmware",
-        "firmware_version": "Firmware", "build": "Build", "mode": "Mode",
-        "piv": "PIV", "sensor": "Fingerprint sensor", "fingerprints": "Fingerprints",
-        "fingerprint_slots": "Fingerprint slots", "hosts": "Trusted computers",
-        "hid_hosts": "Trusted computers", "hid_key": "HID key", "ota": "Firmware update",
-        "type_delay": "Typing delay", "submit_enter": "Submit Enter",
-        "cooldown": "Touch cooldown", "led_idle": "Idle LED",
+        "product_id": "product", "protocol": "protocol", "firmware": "nav_firmware",
+        "firmware_version": "nav_firmware", "build": "build", "mode": "mode",
+        "piv": "PIV", "sensor": "fingerprint_sensor", "fingerprints": "nav_fingerprints",
+        "fingerprint_slots": "fingerprint_slots", "hosts": "trusted_computers",
+        "hid_hosts": "trusted_computers", "hid_key": "hid_key", "ota": "firmware_update",
+        "type_delay": "typing_delay", "submit_enter": "submit_enter",
+        "cooldown": "touch_cooldown", "led_idle": "idle_led",
     ]
     let fields: [String: String]
+    var rawJSON: String {
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.prettyPrinted, .sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else { return "{}" }
+        return json
+    }
     static func label(for key: String) -> String {
         labels[key] ?? key.replacingOccurrences(of: "_", with: " ").capitalized
     }
-    var firmwareVersion: String { fields["firmware_version"] ?? fields["firmware"] ?? "Unknown" }
+    var firmwareVersion: String { fields["firmware_version"] ?? fields["firmware"] ?? "common_unknown" }
     var protocolVersion: Int { Int(fields["protocol"] ?? "1") ?? 0 }
     var `protocol`: Int { protocolVersion }
     var dialect: DeviceDialect { DeviceDialect(protocolVersion: protocolVersion) }
@@ -97,12 +102,12 @@ struct DeviceStatus: Equatable {
     }
 
     init(line: String) throws {
-        guard line.hasPrefix("OK STATUS ") else { throw DeviceError.response("Unrecognized STATUS response.") }
+        guard line.hasPrefix("OK STATUS ") else { throw DeviceError.response("unrecognized_status_response") }
         fields = line.split(separator: " ").dropFirst(2).reduce(into: [:]) { result, item in
             let pair = item.split(separator: "=", maxSplits: 1).map(String.init)
             if pair.count == 2 { result[pair[0]] = pair[1] }
         }
-        guard fields["mode"] != nil else { throw DeviceError.response("STATUS did not include a runtime mode.") }
+        guard fields["mode"] != nil else { throw DeviceError.response("status_not_runtime_mode") }
     }
 }
 
@@ -140,7 +145,7 @@ struct DeviceSetupState: Equatable {
     let deviceName: String
     var mode: SetupMode?
     var phase: DeviceSetupPhase = .chooseMode
-    var message = "Choose how you want to use tinyTouch."
+    var message = "choose_how_use_tinytouch"
     var error: String?
     var provisioningComplete = false
     var canSkipPairing = false
@@ -153,9 +158,9 @@ struct DeviceSetupState: Equatable {
 
 enum SetupValidation {
     static func password(_ password: String, confirmation: String, mode: KeyboardMode) throws {
-        guard !password.isEmpty else { throw DeviceError.response("Password cannot be empty.") }
-        guard password == confirmation else { throw DeviceError.response("Passwords do not match.") }
-        guard password.utf8.count <= 160 else { throw DeviceError.response("Password must be 160 UTF-8 bytes or fewer.") }
+        guard !password.isEmpty else { throw DeviceError.response("password_cannot_empty") }
+        guard password == confirmation else { throw DeviceError.response("passwords_not_match") }
+        guard password.utf8.count <= 160 else { throw DeviceError.response("password_160_bytes_fewer") }
         _ = try KeyboardMapper.translate(Data(password.utf8), mode: mode)
     }
 }
@@ -163,11 +168,11 @@ enum SetupValidation {
 enum SCAuthResult {
     static func identities(exitCode _: Int32, output: String, error: String) -> String? {
         if output.range(of: #"\b[0-9A-Fa-f]{40}\b"#, options: .regularExpression) != nil { return nil }
-        return error.isEmpty ? "macOS has not discovered the tinyTouch PIV identity yet." : error
+        return error.isEmpty ? "macos_has_identity_yet" : error
     }
 
     static func pairingLaunch(exitCode: Int32, error: String) -> String? {
-        exitCode == -1 ? (error.isEmpty ? "macOS PIV pairing could not start." : error) : nil
+        exitCode == -1 ? (error.isEmpty ? "macos_piv_not_start" : error) : nil
     }
 }
 
@@ -176,7 +181,7 @@ struct HIDHostList: Equatable {
     let capacity: Int
     init(line: String) throws {
         let prefix = line.hasPrefix("OK HOST LIST ") ? "OK HOST LIST " : "OK HID_KEY_IDS "
-        guard line.hasPrefix(prefix) else { throw DeviceError.response("Unrecognized computer list.") }
+        guard line.hasPrefix(prefix) else { throw DeviceError.response("unrecognized_computer_list") }
         let fields = line.split(separator: " ").dropFirst(2).reduce(into: [String: String]()) { result, item in
             let pair = item.split(separator: "=", maxSplits: 1).map(String.init)
             if pair.count == 2 { result[pair[0]] = pair[1] }
@@ -185,7 +190,7 @@ struct HIDHostList: Equatable {
         ids = raw == "none" || raw.isEmpty ? [] : raw.split(separator: ",").map { $0.lowercased() }
         capacity = Int(fields["capacity"] ?? "0") ?? 0
         guard ids.allSatisfy({ Data(strictHex: $0, count: 8) != nil }) else {
-            throw DeviceError.response("The device returned an invalid computer ID.")
+            throw DeviceError.response("device_returned_computer_id")
         }
     }
 }
@@ -195,14 +200,14 @@ enum DeviceError: Error, LocalizedError {
     case unsupportedProtocol(Int), foreignFirmware, keychain(OSStatus)
     var errorDescription: String? {
         switch self {
-        case .disconnected: "tinyTouch disconnected."
+        case .disconnected: "tinytouch_disconnected"
         case .busy(let detail): "The serial port is busy. Close the legacy helper, serial monitors, and browser flashing tabs. \(detail)"
-        case .timeout: "tinyTouch did not answer before the command timed out."
+        case .timeout: "tinytouch_not_timed_out"
         case .protocolViolation(let detail): "tinyTouch closed an unsafe serial response: \(detail)"
         case .response(let message): message
-        case .missingCredentials: "This Mac has no HID credentials for this device. Complete HID Setup first."
+        case .missingCredentials: "mac_has_setup_first"
         case .unsupportedProtocol(let version): "Protocol \(version) is newer than this TinyTouch app supports. Update the app before using HID credentials."
-        case .foreignFirmware: "This board is running firmware from a different tinyTouch product. Enter ESP32-S3 ROM mode to factory-flash misa198 firmware."
+        case .foreignFirmware: "board_running_misa198_firmware"
         case .keychain(let status): "Keychain could not access the tinyTouch credential (OSStatus \(status)). Unlock Keychain access, then choose Retry."
         }
     }
@@ -637,7 +642,7 @@ final class DeviceSession: @unchecked Sendable {
         lastReceived = Date(); heartbeatSentAt = nil
         let wasDiscarding = decoder.discarding
         for raw in decoder.feed(Data(bytes.prefix(count))) {
-            guard let line = String(data: raw, encoding: .utf8) else { close(DeviceError.protocolViolation("invalid UTF-8")); return }
+            guard let line = String(data: raw, encoding: .utf8) else { close(DeviceError.protocolViolation("invalid_utf8")); return }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { receive(Self.resynchronizeEvent(trimmed), bytes: raw.count + 1) }
             if descriptor < 0 { return }
@@ -662,7 +667,7 @@ final class DeviceSession: @unchecked Sendable {
         guard let active else { return }
         active.responseBytes += bytes
         guard active.responseBytes <= Self.maximumResponseBytes else {
-            close(DeviceError.protocolViolation("response exceeds 64 KiB")); return
+            close(DeviceError.protocolViolation("response_exceeds_64_kib")); return
         }
         active.lines.append(line)
         if line.hasPrefix("PROMPT ") || line == "EVENT TOUCH" { onPrompt?(line); return }
@@ -791,13 +796,13 @@ final class DeviceSession: @unchecked Sendable {
     }
     private static func humanError(_ line: String) -> String {
         switch line {
-        case "ERR AUTH": "The fingerprint was not recognized or authorization timed out. Try again."
-        case "ERR CONFIG_UNLOCK sensor": "The fingerprint sensor cannot authorize configuration."
-        case "ERR CONFIG_UNLOCK fingerprint": "The fingerprint was not recognized before authorization expired."
-        case "ERR CONFIG_LOCKED run=CONFIG_UNLOCK": "Configuration is locked; authenticate with a fingerprint and try again."
-        case "ERR HID_KEY_ADD": "This device could not add the Mac; its eight-computer list may be full."
-        case "ERR HID_KEY_REMOVE": "That computer ID was not found or could not be removed."
-        default: line.hasPrefix("ERR ENROLL") ? "Fingerprint enrollment did not complete." : "Device error: \(line)"
+        case "ERR AUTH": "fingerprint_not_try_again"
+        case "ERR CONFIG_UNLOCK sensor": "fingerprint_sensor_authorize_configuration"
+        case "ERR CONFIG_UNLOCK fingerprint": "fingerprint_not_authorization_expired"
+        case "ERR CONFIG_LOCKED run=CONFIG_UNLOCK": "configuration_locked_try_again"
+        case "ERR HID_KEY_ADD": "device_not_computer_list_full"
+        case "ERR HID_KEY_REMOVE": "computer_id_not_removed"
+        default: line.hasPrefix("ERR ENROLL") ? "fingerprint_enrollment_not_complete" : "Device error: \(line)"
         }
     }
 }
