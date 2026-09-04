@@ -113,6 +113,14 @@ final class FirmwareSupportTests: XCTestCase {
         XCTAssertTrue(source.contains("defaults.removeObject(forKey: \"newBoardFlashLocationID\")"))
     }
 
+    func testOTACompletesOnlyAfterReconnectedVersionIsVerified() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("TinyTouch/AppState.swift"))
+        XCTAssertTrue(source.contains("pendingOTAVerification"))
+        XCTAssertTrue(source.contains("current.firmwareVersion == pending.version"))
+        XCTAssertTrue(source.contains("firmware.phase = .complete"))
+    }
+
     func testCBridgeRejectsMissingImageBeforeOpeningSerial() {
         var error = [CChar](repeating: 0, count: 128)
         XCTAssertEqual(tt_flash_factory("/dev/does-not-exist", "/does-not-exist", false, nil, nil, &error, error.count), Int32(TT_FLASH_IO))

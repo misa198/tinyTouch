@@ -52,9 +52,12 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
     def test_ota_stages_without_changing_the_current_runtime(self) -> None:
         console = self.source("config_console.c")
         update = self.source("firmware_update.c")
+        main = self.source("main.c")
         self.assertIn("OK OTA STAGED power_cycle=required", console)
         self.assertIn("esp_ota_set_boot_partition", update)
         self.assertIn("firmware_update_staged", update)
+        self.assertIn("ESP_OTA_IMG_PENDING_VERIFY", main)
+        self.assertIn("esp_ota_mark_app_valid_cancel_rollback", main)
         self.assertNotIn("fingerprint_prepare_for_restart", console)
 
     def test_piv_create_is_live_and_status_reports_readiness(self) -> None:

@@ -13,8 +13,8 @@
 static const char *TAG = "fingerprint";
 
 static const uart_port_t FP_UART = UART_NUM_1;
-static const int FP_TX_PIN = 44;
-static const int FP_RX_PIN = 43;
+static const int FP_TX_PIN = 43;
+static const int FP_RX_PIN = 44;
 static const int FP_INT_PIN = 2;
 static const int INT_ACTIVE_VALUE = 1;
 static const uint16_t START_SLOT = 1;

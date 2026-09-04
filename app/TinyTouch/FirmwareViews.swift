@@ -50,7 +50,7 @@ struct NewBoardFlashView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     step("1", "Board ready", complete: true, active: false)
                     step("2", "Fetch verified firmware", complete: hasFetchedFirmware, active: app.firmware.phase == .checking || app.firmware.phase == .downloading)
-                    step("3", "Connect bootloader and prepare flash", complete: hasStartedWriting, active: app.firmware.phase == .writing && app.firmware.progress == 0)
+                    step("3", "Connect bootloader and flashing board", complete: hasStartedWriting, active: app.firmware.phase == .writing && app.firmware.progress == 0)
                     step("4", "Restart board", complete: app.firmware.phase == .complete, active: app.firmware.phase == .writing && app.firmware.progress > 0)
                 }.frame(maxWidth: 420, alignment: .leading)
                 if app.firmware.phase == .checking || ([.downloading, .writing].contains(app.firmware.phase) && app.firmware.progress == 0) { ProgressView().frame(maxWidth: 420) }

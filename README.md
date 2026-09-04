@@ -239,11 +239,11 @@ block-beta
 
   tx_s["TX"]
   wire_tx["────────────────────────"]
-  tx_e["GPIO 43 (RX / UART1)"]
+  tx_e["GPIO 44 (RX / UART1)"]
 
   rx_s["RX"]
   wire_rx["────────────────────────"]
-  rx_e["GPIO 44 (TX / UART1)"]
+  rx_e["GPIO 43 (TX / UART1)"]
 
   int_s["INT"]
   wire_int["────────────────────────"]
@@ -258,8 +258,8 @@ block-beta
 | -- | -- | -- |
 | VCC | 3.3V | do not use 5V |
 | GND | GND | common ground |
-| TX | GPIO 43 (RX) | sensor tx → esp rx |
-| RX | GPIO 44 (TX) | sensor rx → esp tx |
+| TX | GPIO 44 (RX) | sensor tx → esp rx |
+| RX | GPIO 43 (TX) | sensor rx → esp tx |
 | INT | GPIO 2 | finger-present interrupt, active high |
 
 [cad](https://cad.onshape.com/documents/d0e6bb7977e6171d4e4a5086/w/1ded27ad6c634fd1fdaf26d0/e/aca67210e400490a08d0b29a?renderMode=0&uiState=6a4c1df32e292f12144a65fe). if you make changes, please make them open source as well.

@@ -63,6 +63,7 @@ final class AppState: ObservableObject {
     private var setupPassword: String?, setupKey: Data?
     private var firmwareUpdate: FirmwareUpdate?, firmwareImageURL: URL?
     private var pendingFactoryVerification: (id: String, locationID: Int?)?
+    private var pendingOTAVerification: (id: String, locationID: Int?, version: String)?
     private var flashOnboardingVisibility = FlashOnboardingVisibility()
     private var newBoardFlashActive = false
     private var newBoardFlashLocationID: Int?
@@ -181,6 +182,7 @@ final class AppState: ObservableObject {
 
     func installFirmware() {
         guard !busy, let update = firmwareUpdate, let device = selectedDevice else { return }
+        pendingOTAVerification = nil
         busy = true; firmware.phase = .downloading; firmware.progress = 0; firmware.error = nil
         firmware.message = "Downloading and verifying firmware…"
         Task {
@@ -194,6 +196,7 @@ final class AppState: ObservableObject {
                             defer { if command == "AUTH" { self?.clearFingerprintPrompt(deviceID: device.id) } }
                             return try await manager.command(deviceID: device.id, command, timeout: timeout)
                         }, progress: { [weak self] value in self?.firmware.progress = value })
+                    pendingOTAVerification = (device.id, device.identity.locationID, update.version.description)
                     firmware.phase = .reconnect; firmware.progress = 1
                     firmware.message = "OTA is staged. Unplug tinyTouch and reconnect it to boot the new firmware."
                 } else {
@@ -603,6 +606,22 @@ final class AppState: ObservableObject {
                     try await deleteLocalData(pending.id)
                     firmware.phase = .complete; firmware.message = "Factory flash verified. Device data and matching local credentials were reset."
                 } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Post-flash verification failed." }
+            }
+        }
+        if let pending = pendingOTAVerification,
+           let runtime = identities.first(where: { $0.kind == .runtime &&
+               (pending.locationID == nil ? $0.id == pending.id : $0.locationID == pending.locationID) }),
+           opened.contains(runtime.id) {
+            pendingOTAVerification = nil
+            Task {
+                do {
+                    let current = try await status(id: runtime.id)
+                    guard current.firmwareVersion == pending.version else {
+                        throw FirmwareError.invalid("Device restarted with firmware \(current.firmwareVersion), expected \(pending.version).")
+                    }
+                    firmware.phase = .complete; firmware.current = current.firmwareVersion
+                    firmware.message = "Firmware update verified."
+                } catch { firmware.phase = .failed; firmware.error = error.localizedDescription; firmware.message = "Post-update verification failed." }
             }
         }
         if let rom = identities.first(where: { $0.kind == .rom }) { selectedID = rom.id }
