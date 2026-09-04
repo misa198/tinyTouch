@@ -321,6 +321,9 @@ typedef struct {
 } auth_runtime_t;
 
 static void handle_fingerprint_match(fingerprint_match_t match) {
+  char event[24];
+  snprintf(event, sizeof(event), "EVENT FINGER %u", match.slot);
+  config_console_send_line(event);
   bool success = false;
   if (device_config_mode() == DEVICE_MODE_HID) {
     ESP_LOGI(TAG, "finger matched; requesting HID password");

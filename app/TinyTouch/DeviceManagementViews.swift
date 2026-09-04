@@ -45,13 +45,13 @@ struct FingerprintsView: View {
         else {
             Text("Configuration changes require an enrolled fingerprint when the device is already secured.").foregroundStyle(.secondary)
             if let count { Text("Device reports \(count) enrolled fingerprint\(count == 1 ? "" : "s").").foregroundStyle(.secondary) }
-            if let slots, !slots.isEmpty { VStack(spacing: 0) { ForEach(slots, id: \.self) { number in HStack { Label("Fingerprint \(number)", systemImage: "touchid"); Spacer(); Button("Delete", role: .destructive) { deletion = .fingerprint(number) } }.padding(.vertical, 10); if number != slots.last { Divider() } } }.disabled(app.busy) }
+            if let slots, !slots.isEmpty { VStack(spacing: 0) { ForEach(slots, id: \.self) { number in HStack { Label("Fingerprint \(number)", systemImage: "touchid"); Spacer(); Button("Delete", role: .destructive) { deletion = .fingerprint(number) } }.padding(.vertical, 10).background(app.matchedFingerprint == number ? Color.green.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 8)).animation(.easeOut(duration: 0.15), value: app.matchedFingerprint); if number != slots.last { Divider() } } }.disabled(app.busy) }
             if slots == nil, let count, count > 0 { Text("This firmware does not report fingerprint slot IDs. Update firmware to manage individual fingerprints safely.").foregroundStyle(.secondary) }
             if let nextSlot { Button("Add Fingerprint") { app.enroll(slot: nextSlot) }.disabled(app.busy) }
             if let count, count > 0 { Button("Delete All Fingerprints", role: .destructive) { deletion = .all }.disabled(app.busy) }
             DeviceMessageView()
         }
-    } }.alert("Delete fingerprints?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } })) {
+    } }.onAppear { app.setFingerprintsVisible(true) }.onDisappear { app.setFingerprintsVisible(false) }.alert("Delete fingerprints?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } })) {
         Button("Cancel", role: .cancel) { deletion = nil }; Button("Delete", role: .destructive) { let target = deletion; deletion = nil; switch target { case .fingerprint(let number): app.deleteFingerprint(slot: number); case .all: app.deleteAllFingerprints(); case nil: break } }
     } message: { switch deletion { case .fingerprint(let number): Text("This removes Fingerprint \(number)."); case .all: Text("This removes every enrolled fingerprint."); case nil: EmptyView() } } }
 }

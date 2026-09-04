@@ -550,6 +550,7 @@ final class DeviceSession: @unchecked Sendable {
     static let maximumLineBytes = 2 * 1024, maximumResponseBytes = 64 * 1024
     let identity: DeviceIdentity
     var onPrompt: (@Sendable (String) -> Void)?
+    var onFingerprintMatch: (@Sendable (Int) -> Void)?
     var onError: (@Sendable (Error) -> Void)?
     var onOpen: (@Sendable (Bool) -> Void)?
 
@@ -648,6 +649,7 @@ final class DeviceSession: @unchecked Sendable {
     }
 
     private func receive(_ line: String, bytes: Int) {
+        if let slot = Self.fingerprintMatchSlot(line) { onFingerprintMatch?(slot); return }
         if line.hasPrefix("EV ") || line.hasPrefix("EV2 ") { handleEvent(line); return }
         if line.hasPrefix("OK STATUS "), let status = try? DeviceStatus(line: line) {
             protocolVersion = status.protocolVersion
@@ -781,6 +783,12 @@ final class DeviceSession: @unchecked Sendable {
         guard let marker = markers.last, marker > line.startIndex else { return line }
         return String(line[marker...])
     }
+    static func fingerprintMatchSlot(_ line: String) -> Int? {
+        let parts = line.split(separator: " ")
+        guard parts.count == 3, parts[0] == "EVENT", parts[1] == "FINGER",
+              let slot = Int(parts[2]), (1...5).contains(slot) else { return nil }
+        return slot
+    }
     private static func humanError(_ line: String) -> String {
         switch line {
         case "ERR AUTH": "The fingerprint was not recognized or authorization timed out. Try again."
@@ -798,6 +806,7 @@ final class DeviceSession: @unchecked Sendable {
 final class DeviceManager {
     var onChange: (@MainActor ([DeviceIdentity], Set<String>, Set<String>, [String: Error]) -> Void)?
     var onPrompt: (@MainActor (String, String) -> Void)?
+    var onFingerprintMatch: (@MainActor (String, Int) -> Void)?
     private var sessions: [String: DeviceSession] = [:], identities: [DeviceIdentity] = []
     private var errors: [String: Error] = [:], opened: Set<String> = [], ready: Set<String> = [], blocked: Set<String> = [], exclusive: Set<String> = []
     var retryDeadlines: [String: Date] = [:]
@@ -908,6 +917,7 @@ final class DeviceManager {
                 let session = DeviceSession(identity: identity, heartbeatInterval: heartbeatInterval,
                                             heartbeatTimeout: heartbeatTimeout, keychainEnabled: sessionUsesKeychain)
                 session.onPrompt = { [weak self] prompt in Task { @MainActor in self?.onPrompt?(identity.id, prompt) } }
+                session.onFingerprintMatch = { [weak self] slot in Task { @MainActor in self?.onFingerprintMatch?(identity.id, slot) } }
                 session.onOpen = { [weak self] credentialsReady in Task { @MainActor in
                     self?.opened.insert(identity.id); if credentialsReady { self?.ready.insert(identity.id) }
                     self?.failures[identity.id] = nil; self?.retryDeadlines[identity.id] = nil

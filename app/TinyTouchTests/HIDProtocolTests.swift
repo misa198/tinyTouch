@@ -359,6 +359,13 @@ final class HIDProtocolTests: XCTestCase {
         }
     }
 
+    func testFingerprintMatchEventParsing() {
+        XCTAssertEqual(DeviceSession.fingerprintMatchSlot("EVENT FINGER 3"), 3)
+        XCTAssertNil(DeviceSession.fingerprintMatchSlot("EVENT FINGER 0"))
+        XCTAssertNil(DeviceSession.fingerprintMatchSlot("EVENT FINGER 6"))
+        XCTAssertNil(DeviceSession.fingerprintMatchSlot("EVENT FINGER 3 extra"))
+    }
+
     func testUnknownProtocolDoesNotServeCredentials() async throws {
         let pty = try PTY(); defer { pty.close() }
         let session = DeviceSession(identity: .init(id: "FUTURE", port: pty.path), password: Data("secret".utf8),

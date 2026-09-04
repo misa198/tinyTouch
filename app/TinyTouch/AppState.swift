@@ -48,6 +48,7 @@ final class AppState: ObservableObject {
     @Published var appMessageIsError = false
     @Published private(set) var setup: DeviceSetupState?
     @Published private(set) var fingerprintPrompt: FingerprintPrompt?
+    @Published private(set) var matchedFingerprint: Int?
     @Published private(set) var backgroundEnabled: Bool
     @Published private(set) var launchAtLogin: Bool
     @Published private(set) var legacyHelperDetected: Bool
@@ -60,6 +61,7 @@ final class AppState: ObservableObject {
 
     private let manager = DeviceManager(), defaults = UserDefaults.standard
     private var window: NSWindow?, windowCloseObserver: NSObjectProtocol?, knownOpened: Set<String> = []
+    private var fingerprintsVisible = false, fingerprintFlashTask: Task<Void, Never>?
     private var setupPassword: String?, setupKey: Data?
     private var firmwareUpdate: FirmwareUpdate?, firmwareImageURL: URL?
     private var pendingFactoryVerification: (id: String, locationID: Int?)?
@@ -98,6 +100,7 @@ final class AppState: ObservableObject {
         Self.active = self
         if legacyHelperDetected { legacyOwners = LegacyProcessInspector.owners(ports: SerialDiscovery.devices().map(\.port)) }
         manager.onPrompt = { [weak self] id, prompt in self?.showPrompt(prompt, deviceID: id) }
+        manager.onFingerprintMatch = { [weak self] id, slot in self?.flashFingerprint(slot, deviceID: id) }
         manager.onChange = { [weak self] identities, opened, ready, errors in
             self?.update(identities, opened: opened, ready: ready, errors: errors)
         }
@@ -153,6 +156,21 @@ final class AppState: ObservableObject {
     func setAdvancedFirmwareDevices(_ enabled: Bool) {
         guard !isFirmwareWriting else { return }
         advancedFirmwareDevices = enabled; manager.setAdvancedDiscovery(enabled)
+    }
+
+    func setFingerprintsVisible(_ visible: Bool) {
+        fingerprintsVisible = visible
+        if !visible { fingerprintFlashTask?.cancel(); matchedFingerprint = nil }
+    }
+
+    private func flashFingerprint(_ slot: Int, deviceID: String) {
+        guard fingerprintsVisible, selectedID == deviceID else { return }
+        fingerprintFlashTask?.cancel(); matchedFingerprint = slot
+        fingerprintFlashTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            guard !Task.isCancelled else { return }
+            self?.matchedFingerprint = nil
+        }
     }
 
     func checkFirmware() {
