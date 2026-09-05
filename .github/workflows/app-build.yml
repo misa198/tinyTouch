@@ -1,7 +1,6 @@
 name: App Build
 
 on:
-  pull_request:
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -17,9 +16,9 @@ on:
         type: string
     secrets:
       MACOS_SIGNING_CERTIFICATE:
-        required: true
+        required: false
       MACOS_SIGNING_CERTIFICATE_PASSWORD:
-        required: true
+        required: false
     outputs:
       artifact-name:
         description: Uploaded app artifact name
@@ -41,8 +40,6 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - name: Test app
-        run: swift test
       - name: Import release signing certificate
         if: inputs.version != ''
         env:

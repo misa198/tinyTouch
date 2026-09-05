@@ -9,6 +9,8 @@
 #include "tinyusb_default_config.h"
 #include "tusb.h"
 #include "device/usbd_pvt.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "touch_pin_hid.h"
 #include "usb_descriptors.h"
 
@@ -23,10 +25,24 @@ static uint8_t tx_buf[CCID_BUF_SIZE];
 static uint8_t rhport_active;
 static ccid_apdu_handler_t apdu_handler;
 static bool in_busy;
+static TaskHandle_t recovery_task;
+
+static void recover_usb_after_resume(void *arg) {
+  (void)arg;
+  while (true) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // ponytail: macOS can wedge composite endpoints on resume; remove when
+    // TinyUSB/macOS reliably restores CDC, HID, and CCID without re-enumeration.
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    tud_connect();
+  }
+}
 
 static void usb_event_cb(tinyusb_event_t *event, void *arg) {
   (void)arg;
   if (event->id == TINYUSB_EVENT_ATTACHED) touch_pin_hid_usb_attached();
+  else if (event->id == TINYUSB_EVENT_RESUMED && recovery_task) xTaskNotifyGive(recovery_task);
 }
 
 static uint32_t le32(const uint8_t *p) {
@@ -199,4 +215,6 @@ void usb_ccid_start(ccid_apdu_handler_t handler) {
   tusb_cfg.descriptor.full_speed_config = tiny_touch_configuration_descriptor;
   tusb_cfg.event_cb = usb_event_cb;
   ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
+  configASSERT(xTaskCreate(recover_usb_after_resume, "usb_recover", 2048, NULL, 4,
+                           &recovery_task) == pdPASS);
 }

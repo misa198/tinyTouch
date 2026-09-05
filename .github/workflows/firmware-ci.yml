@@ -1,0 +1,39 @@
+name: Firmware CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - firmware/**
+      - VERSION
+      - channels/app-firmware.json
+      - packaging/assemble-release.py
+      - packaging/release_integrity.py
+      - tests/test_protocol6_firmware.py
+      - .github/workflows/firmware-build.yml
+      - .github/workflows/firmware-ci.yml
+  pull_request:
+    paths:
+      - firmware/**
+      - VERSION
+      - channels/app-firmware.json
+      - packaging/assemble-release.py
+      - packaging/release_integrity.py
+      - tests/test_protocol6_firmware.py
+      - .github/workflows/firmware-build.yml
+      - .github/workflows/firmware-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests/test_protocol6_firmware.py
+
+  build:
+    uses: ./.github/workflows/firmware-build.yml

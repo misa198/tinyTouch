@@ -26,7 +26,6 @@ static const uint8_t FP_LED_RED = 0x04;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
 static const uint8_t FP_LED_FUNC_OFF = 4;
 
-static uint8_t current_led = 0xff;
 static SemaphoreHandle_t fp_mutex;
 static bool sensor_ready;
 static portMUX_TYPE sensor_state_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -192,15 +191,9 @@ static void fp_give(void) {
 }
 
 static void set_aura(uint8_t color) {
-  if (color == current_led) return;
   uint8_t params[] = {FP_LED_FUNC_STEADY, color, color, 0};
   uint8_t confirm = 0xff;
-  if (fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
-      confirm == 0x00) {
-    current_led = color;
-  } else {
-    current_led = 0xff;
-  }
+  fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
 }
 
 static void set_idle_aura(void) {
@@ -208,12 +201,9 @@ static void set_idle_aura(void) {
     set_aura(FP_LED_BLUE);
     return;
   }
-  if (current_led == 0) return;
   uint8_t params[] = {FP_LED_FUNC_OFF, 0, 0, 0};
   uint8_t confirm = 0xff;
-  bool off = fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
-             confirm == 0x00;
-  current_led = off ? 0 : 0xff;
+  fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
 }
 
 static void show_result(bool ok) {
@@ -316,6 +306,7 @@ fingerprint_match_t fingerprint_authorize_poll_match(void) {
   }
   fingerprint_match_t match = fingerprint_match_captured(true);
   if (match.slot) set_aura(FP_LED_GREEN);
+  else set_idle_aura();
   fp_give();
   return match;
 }

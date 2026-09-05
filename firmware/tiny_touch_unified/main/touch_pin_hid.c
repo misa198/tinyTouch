@@ -27,15 +27,31 @@ static void secure_wipe(void *data, size_t length) {
   while (length--) *cursor++ = 0;
 }
 
+static bool usb_hid_ready(void) {
+  return tud_mounted() && !tud_suspended() && tud_hid_ready() &&
+         (device_config_mode() != DEVICE_MODE_HID || tud_cdc_connected());
+}
+
 static bool wait_hid_ready(void) {
   TickType_t started = xTaskGetTickCount();
-  while (!tud_hid_ready()) {
+  while (!usb_hid_ready()) {
+    if (!tud_mounted() || tud_suspended()) return false;
     if ((TickType_t)(xTaskGetTickCount() - started) >= pdMS_TO_TICKS(2000)) {
       return false;
     }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
   return true;
+}
+
+static bool receive_password_response(char response[640], uint32_t timeout_ms) {
+  TickType_t started = xTaskGetTickCount();
+  TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
+  while ((TickType_t)(xTaskGetTickCount() - started) < timeout) {
+    if (!tud_mounted() || tud_suspended() || !tud_cdc_connected()) return false;
+    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(50)) == pdTRUE) return true;
+  }
+  return false;
 }
 
 static bool send_key(uint8_t modifier, uint8_t key) {
@@ -265,7 +281,7 @@ static bool request_and_type_password(fingerprint_match_t match) {
     snprintf(event, sizeof(event), "EV %s %lu %u %u %s", nonce,
              (unsigned long)event_counter, match.slot, match.score, mac_hex);
     config_console_send_line(event);
-    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(6000)) != pdTRUE ||
+    if (!receive_password_response(response, 6000) ||
         !decrypt_password(pairing_key, nonce, response, password, &password_length)) goto done;
   } else {
     int used = snprintf(event, sizeof(event), "EV2 %s %lu %u %u", nonce,
@@ -282,7 +298,7 @@ static bool request_and_type_password(fingerprint_match_t match) {
     }
     if (used <= 0 || used >= sizeof(event)) goto done;
     config_console_send_line(event);
-    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(1500)) == pdTRUE &&
+    if (receive_password_response(response, 1500) &&
         decrypt_password_v2(nonce, response, hosts, host_count, password,
                             &password_length)) {
       result = type_ascii(password, password_length);
@@ -296,7 +312,7 @@ static bool request_and_type_password(fingerprint_match_t match) {
     snprintf(event, sizeof(event), "EV %s %lu %u %u %s", nonce,
              (unsigned long)event_counter, match.slot, match.score, mac_hex);
     config_console_send_line(event);
-    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(4500)) != pdTRUE ||
+    if (!receive_password_response(response, 4500) ||
         !decrypt_password(pairing_key, nonce, response, password, &password_length)) goto done;
   }
   result = type_ascii(password, password_length);
@@ -364,7 +380,7 @@ static void touch_hid_task(void *arg) {
 
     // Presence is the sole trigger for a capture. Idle operation never sends
     // sensor commands and therefore never flashes a failure indication.
-    if (!present || !tud_hid_ready()) {
+    if (!present || !usb_hid_ready()) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
@@ -373,6 +389,11 @@ static void touch_hid_task(void *arg) {
     if (match.slot == 0) {
       auth_wait_for_lift(&runtime, now);
       vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    if (!usb_hid_ready()) {
+      fingerprint_led_idle();
+      auth_wait_for_lift(&runtime, now);
       continue;
     }
 

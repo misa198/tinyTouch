@@ -821,7 +821,8 @@ final class DeviceManager {
     private let heartbeatInterval: TimeInterval, heartbeatTimeout: TimeInterval
     private let sessionUsesKeychain: Bool
     private var failures: [String: Int] = [:], activeLeaseNonce: String?
-    private var enabled = true, advancedDiscovery = false, timer: Timer?, wakeObserver: NSObjectProtocol?
+    private var enabled = true, advancedDiscovery = false, sleeping = false, timer: Timer?
+    private var wakeObserver: NSObjectProtocol?, sleepObserver: NSObjectProtocol?
 
     init(discover: (@MainActor () -> [DeviceIdentity])? = nil,
          backoff: BackoffPolicy = BackoffPolicy(), random: @escaping () -> Double = { Double.random(in: 0...1) },
@@ -835,6 +836,7 @@ final class DeviceManager {
 
     deinit {
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
     }
 
     func start(enabled: Bool) {
@@ -864,15 +866,29 @@ final class DeviceManager {
 
     private func observeWake() {
         guard wakeObserver == nil else { return }
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        let notifications = NSWorkspace.shared.notificationCenter
+        sleepObserver = notifications.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.prepareForSleep() }
+        }
+        wakeObserver = notifications.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.reconnectAfterWake() }
         }
     }
 
+    func prepareForSleep() {
+        sleeping = true
+        sessions.values.forEach { $0.stopSynchronously() }
+        sessions.removeAll(); opened.removeAll(); ready.removeAll()
+        publish()
+    }
+
     func reconnectAfterWake() {
-        sessions.values.forEach { $0.stop() }
+        sleeping = false
+        sessions.values.forEach { $0.stopSynchronously() }
         sessions.removeAll(); opened.removeAll(); ready.removeAll(); retryDeadlines.removeAll(); failures.removeAll()
         scan()
     }
@@ -887,6 +903,7 @@ final class DeviceManager {
     nonisolated static func canReconnect(deadline: Date?, now: Date = Date()) -> Bool { deadline.map { now >= $0 } ?? true }
 
     func scan() {
+        guard !sleeping else { publish(); return }
         if let lease = leaseObserver.active() {
             if activeLeaseNonce != lease.nonce {
                 sessions.values.forEach { $0.stopSynchronously() }
