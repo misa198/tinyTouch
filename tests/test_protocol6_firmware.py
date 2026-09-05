@@ -34,6 +34,15 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn("0x42, 0x00, 0x02, 0x00", descriptors)
         self.assertIn("product_id=misa198.tinytouch.v1", self.source("config_console.c"))
 
+    def test_usb_soft_reenumerates_after_resume(self) -> None:
+        usb = self.source("usb_ccid.c")
+        for name in ("sdkconfig.defaults", "sdkconfig"):
+            config = (PROJECT / name).read_text()
+            self.assertIn("CONFIG_TINYUSB_RESUME_CALLBACK=y", config)
+        self.assertIn("event->id == TINYUSB_EVENT_RESUMED", usb)
+        self.assertIn("tud_disconnect();", usb)
+        self.assertIn("tud_connect();", usb)
+
     def test_persistence_swaps_one_live_config_blob(self) -> None:
         source = self.source("device_config.c")
         self.assertIn('CONFIG_NAMESPACE "tt6"', source)
@@ -97,7 +106,9 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
 
     def test_fingerprint_auth_requires_presence(self) -> None:
         source = self.source("touch_pin_hid.c")
-        self.assertIn("if (!present || !tud_hid_ready())", source)
+        self.assertIn("if (!present || !usb_hid_ready())", source)
+        self.assertIn("device_config_mode() != DEVICE_MODE_HID || tud_cdc_connected()", source)
+        self.assertIn("tud_suspended() || !tud_cdc_connected()", source)
         self.assertNotIn("!fingerprint_is_ready()", source)
         self.assertNotIn("fingerprint_service_health", source)
         self.assertNotIn("usb_runtime", source)
@@ -124,6 +135,8 @@ class ProtocolSixFirmwareTests(unittest.TestCase):
         self.assertIn('strcmp(arguments, "LED_IDLE")', console)
         self.assertIn("bool value = !config.idle_led_off", config)
         self.assertIn("FP_LED_FUNC_OFF", fingerprint)
+        self.assertIn("else set_idle_aura();", fingerprint)
+        self.assertNotIn("current_led", fingerprint)
         self.assertIn("fp_command(0x1f", fingerprint)
 
 

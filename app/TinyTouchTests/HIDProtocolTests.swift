@@ -481,6 +481,14 @@ final class HIDProtocolTests: XCTestCase {
         _ = try await first.value
 
         await MainActor.run {
+            manager.prepareForSleep()
+            manager.scan()
+        }
+        do {
+            _ = try await manager.command(deviceID: "WAKE", "STATUS")
+            XCTFail("Sleep should close the serial session")
+        } catch {}
+        await MainActor.run {
             state.identities = [.init(id: "WAKE", port: newPTY.path)]
             manager.reconnectAfterWake()
         }
